@@ -342,6 +342,19 @@ struct rpt_chan_stat {
 #define NEWKEY1STR "!NEWKEY1!"
 #define IAXKEYSTR "!IAXKEY!"
 
+enum keychunk_type {
+	STANDARD,
+	UK
+};
+
+struct rpt_keychunk {
+	enum keychunk_type type;
+	int                cold;    /* Sets the amount of time required for access from cold  */
+	int                warm;	/* Sets the amount of time required for a beep            */
+	int                cc;
+	int                wc;
+};
+
 struct vox {
 	float	speech_energy;
 	float	noise_energy;
@@ -723,6 +736,7 @@ struct rpt {
 		int nldisc;
 		const char *timezone;
 	} p;
+	struct keychunk keyfilter;
 	struct rpt_link links;
 	int unkeytocttimer;
 	time_t lastkeyedtime;
