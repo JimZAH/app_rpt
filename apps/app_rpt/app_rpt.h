@@ -230,6 +230,11 @@ typedef struct {
 #define DAQ_ADC_ACQINT 10 /* Acquire interval in sec. for ADC channels */
 #define ADC_HIST_TIME 300 /* Time  in sec. to calculate short term avg, high and low peaks from. */
 #define ADC_HISTORY_DEPTH ADC_HIST_TIME/DAQ_ADC_ACQINT
+
+/* Set sane defaults for the keychunk filter */
+#define DEFAULT_KEYCHUNK_TYPE		0
+#define DEFAULT_KEYCHUNK_TIME 		500
+#define DEFAULT_KEYCHUNK_VALID_BEEP	500
  
 
 enum {REM_OFF,REM_MONITOR,REM_TX};
