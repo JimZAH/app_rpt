@@ -18,6 +18,21 @@
 
 extern struct rpt rpt_vars[MAXRPTS];
 
+static char *ctime_no_newline(const time_t *clock)
+{
+	static char buf[32];
+	char *cp;
+	size_t len;
+
+	cp = ctime_r(clock, buf);
+	len = strnlen(buf, sizeof(buf));
+	if ((len > 0) && (buf[--len] == '\n')) {
+		buf[len] = '\0';
+	}
+
+	return cp;
+}
+
 void rpt_manager_trigger(struct rpt *myrpt, char *event, char *value)
 {
 	manager_event(EVENT_FLAG_CALL, event,
@@ -26,8 +41,9 @@ void rpt_manager_trigger(struct rpt *myrpt, char *event, char *value)
 		"EventValue: %s\r\n"
 		"LastKeyedTime: %s\r\n"
 		"LastTxKeyedTime: %s\r\n",
-		myrpt->name, ast_channel_name(myrpt->rxchannel), value, ctime(&myrpt->lastkeyedtime),
-		ctime(&myrpt->lasttxkeyedtime)
+		myrpt->name, ast_channel_name(myrpt->rxchannel), value,
+		ctime_no_newline(&myrpt->lastkeyedtime),
+		ctime_no_newline(&myrpt->lasttxkeyedtime)
 	);
 }
 
@@ -80,7 +96,7 @@ static int rpt_manager_do_sawstat(struct mansession *ses, const struct message *
 
 			l = rpt_vars[i].links.next;
 			while (l && (l != &rpt_vars[i].links)) {
-				if (l->name[0] == '0') {	// Skip '0' nodes 
+				if (l->name[0] == '0') {	// Skip '0' nodes
 					l = l->next;
 					continue;
 				}
@@ -89,7 +105,7 @@ static int rpt_manager_do_sawstat(struct mansession *ses, const struct message *
 							  (l->lastunkeytime) ? (int) (now - l->lastunkeytime) : -1);
 				l = l->next;
 			}
-			rpt_mutex_unlock(&rpt_vars[i].lock);	// UNLOCK 
+			rpt_mutex_unlock(&rpt_vars[i].lock);	// UNLOCK
 			astman_append(ses, "\r\n");
 			return (0);
 		}
@@ -100,9 +116,8 @@ static int rpt_manager_do_sawstat(struct mansession *ses, const struct message *
 
 static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m, char *str)
 {
-	int i, j;
-	unsigned int ns;
-	char lbuf[MAXLINKLIST], *strs[MAXLINKLIST];
+	int i, j, ns, n = 1;
+	char **strs;
 	struct rpt *myrpt;
 	struct ast_var_t *newvariable;
 	char *connstate;
@@ -111,10 +126,13 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 	struct rpt_lstat s_head;
 	const char *node = astman_get_header(m, "Node");
 	int nrpts = rpt_num_rpts();
+	struct ast_str *lbuf = ast_str_create(RPT_AST_STR_INIT_SIZE);
 
 	char *parrot_ena, *sys_ena, *tot_ena, *link_ena, *patch_ena, *patch_state;
 	char *sch_ena, *user_funs, *tail_type, *iconns, *tot_state, *ider_state, *tel_mode;
-
+	if (!lbuf) {
+		return -1;
+	}
 	s = NULL;
 	s_head.next = &s_head;
 	s_head.prev = &s_head;
@@ -159,17 +177,17 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 				ider_state = "2";	//"CLEAN";
 
 			switch (myrpt->callmode) {
-			case 1:
+			case CALLMODE_DIALING:
 				patch_state = "0";	//"DIALING";
 				break;
-			case 2:
+			case CALLMODE_CONNECTING:
 				patch_state = "1";	//"CONNECTING";
 				break;
-			case 3:
+			case CALLMODE_UP:
 				patch_state = "2";	//"UP";
 				break;
 
-			case 4:
+			case CALLMODE_FAILED:
 				patch_state = "3";	//"CALL FAILED";
 				break;
 
@@ -190,9 +208,9 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 
 			/* Get connected node info */
 			/* Traverse the list of connected nodes */
-
-			__mklinklist(myrpt, NULL, lbuf, 0);
-
+			ast_mutex_lock(&myrpt->lock);
+			n = __mklinklist(myrpt, NULL, &lbuf, 0) + 1;
+			ast_mutex_unlock(&myrpt->lock);
 			j = 0;
 			l = myrpt->links.next;
 			while (l && (l != &myrpt->links)) {
@@ -200,9 +218,9 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 					l = l->next;
 					continue;
 				}
-				if (!(s = (struct rpt_lstat *) ast_malloc(sizeof(struct rpt_lstat)))) {
-					ast_log(LOG_ERROR, "Malloc failed in rpt_do_lstats\r\n");
+				if (!(s = ast_malloc(sizeof(struct rpt_lstat)))) {
 					rpt_mutex_unlock(&myrpt->lock);
+					ast_free(lbuf);
 					return -1;
 				}
 				memset(s, 0, sizeof(struct rpt_lstat));
@@ -253,9 +271,13 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 			astman_append(ses, "LinkedNodes: ");
 
 			/* Get all linked nodes info */
-
+			strs = ast_malloc(n * sizeof(char *));
+			if (!strs) {
+				ast_free(lbuf);
+				return RESULT_FAILURE;
+			}
 			/* parse em */
-			ns = finddelim(lbuf, strs, MAXLINKLIST);
+			ns = finddelim(ast_str_buffer(lbuf), strs, n);
 			/* sort em */
 			if (ns) {
 				qsort((void *) strs, ns, sizeof(char *), mycompar);
@@ -273,6 +295,7 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 				}
 			}
 			astman_append(ses, "\r\n");
+			ast_free(strs);
 
 			/* Get variables info */
 			j = 0;
@@ -330,12 +353,15 @@ static int rpt_manager_do_xstat(struct mansession *ses, const struct message *m,
 			astman_append(ses, "iconns: %s\r\n", iconns);
 			astman_append(ses, "tot_state: %s\r\n", tot_state);
 			astman_append(ses, "ider_state: %s\r\n", ider_state);
-			astman_append(ses, "tel_mode: %s\r\n\r\n", tel_mode);
+			astman_append(ses, "tel_mode: %s\r\n", tel_mode);
+			astman_append(ses, "\r\n");
 
+			ast_free(lbuf);
 			return 0;
 		}
 	}
 	astman_send_error(ses, m, "RptStatus unknown or missing node");
+	ast_free(lbuf);
 	return 0;
 }
 
@@ -617,13 +643,13 @@ static int rpt_manager_do_stats(struct mansession *s, const struct message *m, c
 			astman_append(s, "DtmfCommandsSinceSystemInitialization: %d\r\n", totalexecdcommands);
 			astman_append(s, "LastDtmfCommandExecuted: %s\r\n",
 						  (lastdtmfcommand && strlen(lastdtmfcommand)) ? lastdtmfcommand : not_applicable);
+
 			hours = dailytxtime / 3600000;
 			dailytxtime %= 3600000;
 			minutes = dailytxtime / 60000;
 			dailytxtime %= 60000;
 			seconds = dailytxtime / 1000;
 			dailytxtime %= 1000;
-
 			astman_append(s, "TxTimeToday: %02d:%02d:%02d:%02d\r\n", hours, minutes, seconds, dailytxtime);
 
 			hours = (int) totaltxtime / 3600000;
@@ -632,7 +658,6 @@ static int rpt_manager_do_stats(struct mansession *s, const struct message *m, c
 			totaltxtime %= 60000;
 			seconds = (int) totaltxtime / 1000;
 			totaltxtime %= 1000;
-
 			astman_append(s, "TxTimeSinceSystemInitialization: %02d:%02d:%02d:%02d\r\n", hours, minutes, seconds,
 						  (int) totaltxtime);
 

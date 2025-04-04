@@ -39,8 +39,11 @@ apt-get install -y libusb-dev # chan_simpleusb and chan_usbradio require libusb-
 modprobe snd-pcm-oss # /dev/dsp1 needs to exist for chan_simpleusb and chan_usbradio to work
 echo "snd-pcm-oss" >> /etc/modules # load module at startup for USB
 
-cp ../$MYDIR/Makefiles.diff /tmp/rpt.diff
-git apply /tmp/rpt.diff
+cp ../$MYDIR/apps/Makefile.diff /tmp/app_Makefile.diff
+git apply /tmp/app_Makefile.diff
+
+cp ../$MYDIR/channels/Makefile.diff /tmp/channels_Makefile.diff
+git apply /tmp/channels_Makefile.diff
 
 cp ../$MYDIR/utils/Makefile.diff /tmp/utils_makefile.diff
 git apply /tmp/utils_makefile.diff
@@ -139,35 +142,43 @@ rpt_add "res/res_rpt_http_registrations.c"
 rpt_add "res/res_usbradio.c"
 rpt_add "res/res_usbradio.exports.in"
 
-rpt_add "utils/pi-tune-menu.c"
 rpt_add "utils/radio-tune-menu.c"
 rpt_add "utils/simpleusb-tune-menu.c"
 
-nproc
-
 make -j$(nproc) apps
-make -j$(nproc) channels
-make -j$(nproc) res
-
-# Compilation failed
 if [ $? -ne 0 ]; then
-	exit $?
+	exit 1
+fi
+
+make -j$(nproc) channels
+if [ $? -ne 0 ]; then
+	exit 1
+fi
+
+make -j$(nproc) res
+if [ $? -ne 0 ]; then
+	exit 1
 fi
 
 make install
-
-# Compilation failed
 if [ $? -ne 0 ]; then
-	exit $?
+	exit 1
 fi
 
 # If the rpt sounds don't exist yet, add them
 if [ ! -d /var/lib/asterisk/sounds/en/rpt ]; then
 	printf "RPT sounds don't exist yet, adding them now...\n"
 	mkdir /var/lib/asterisk/sounds/en/rpt
-	cd rpt
+	cd /var/lib/asterisk/sounds/en/rpt
 	wget "http://downloads.allstarlink.org/asterisk-asl-sounds-en-ulaw.tar.gz"
 	# Sounds are extracted directly into the dir
 	tar -xvzf asterisk-asl-sounds-en-ulaw.tar.gz
 	rm asterisk-asl-sounds-en-ulaw.tar.gz
+fi
+
+# Add tests to the test suite, if it exists
+if [ -d /usr/src/testsuite ]; then
+	cd /usr/src/testsuite
+	git apply ../$MYDIR/tests/apps/tests_apps.diff
+	cp -r ../$MYDIR/tests/apps/rpt tests/apps
 fi

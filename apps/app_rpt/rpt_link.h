@@ -42,8 +42,6 @@ void send_link_dtmf(struct rpt *myrpt, char c);
 
 void send_link_keyquery(struct rpt *myrpt);
 
-void send_tele_link(struct rpt *myrpt, char *cmd);
-
 /*!
  * \brief Add an rpt_link to a rpt
  * \param myrpt
@@ -58,8 +56,17 @@ void rpt_link_add(struct rpt *myrpt, struct rpt_link *l);
  */
 void rpt_link_remove(struct rpt *myrpt, struct rpt_link *l);
 
-/*! \brief must be called locked */
-void __mklinklist(struct rpt *myrpt, struct rpt_link *mylink, char *buf, int flag);
+/*!
+ * \brief Create a list of links for this node.
+ * Must be called locked.
+ * \param myrpt		Pointer to rpt structure.
+ * \param mylink	Pointer to rpt_link structure.
+ * \param buf		Pointer to ast_str buffer - link string is generated in this buffer.
+ * \param alink_format	Flag to indicate if RPT_ALINK format is returned. If not, RPT_LINK
+ * format is returned. \retval		link count.
+ */
+
+int __mklinklist(struct rpt *myrpt, struct rpt_link *mylink, struct ast_str **buf, int alink_format);
 
 /*! \brief must be called locked */
 void __kickshort(struct rpt *myrpt);
@@ -76,3 +83,8 @@ void rpt_update_links(struct rpt *myrpt);
  * \retval 2 Already connected to this node
  */
 int connect_link(struct rpt *myrpt, char *node, int mode, int perma);
+
+/*! \brief Free link and associated internal memory.
+ * \param link Link structure to free
+ */
+void rpt_link_free(struct rpt_link *link);

@@ -4,6 +4,7 @@
 #include <sys/vfs.h> /* use statfs */
 
 #include "asterisk/channel.h" /* includes all the locking stuff needed (lock.h doesn't) */
+#include "asterisk/translate.h"
 
 #include "app_rpt.h"
 #include "rpt_lock.h"
@@ -30,9 +31,10 @@ int matchkeyword(char *string, char **param, char *keywords[])
 	return 0;
 }
 
-int explode_string(char *str, char *strp[], int limit, char delim, char quote)
+
+int explode_string(char *str, char *strp[], size_t limit, char delim, char quote)
 {
-	int i, l, inquo;
+	int i, inquo;
 
 	inquo = 0;
 	i = 0;
@@ -41,7 +43,7 @@ int explode_string(char *str, char *strp[], int limit, char delim, char quote)
 		strp[0] = 0;
 		return (0);
 	}
-	for (l = 0; *str && (l < limit); str++) {
+	for (; *str && (i < (limit - 1)); str++) {
 		if (quote) {
 			if (*str == quote) {
 				if (inquo) {
@@ -55,12 +57,11 @@ int explode_string(char *str, char *strp[], int limit, char delim, char quote)
 		}
 		if ((*str == delim) && (!inquo)) {
 			*str = 0;
-			l++;
 			strp[i++] = str + 1;
 		}
 	}
 	strp[i] = 0;
-	return (i);
+	return i;
 
 }
 
@@ -85,8 +86,15 @@ char *string_toupper(char *str)
 	}
 	return str;
 }
-
-int finddelim(char *str, char *strp[], int limit)
+/*!
+ * \brief Find the delimiter in a string and return a pointer array to the start of each token.
+ * Note: This modifies the string str, be sure to save an intact copy if you need it later.
+ * \param str The string to search
+ * \param strp An array of pointers to the start of each token + 1 for a null end token
+ * \param limit The maximum number of tokens to find + 1 for the null end token
+ * \return The number of tokens found
+ */
+int finddelim(char *str, char *strp[], size_t limit)
 {
 	return explode_string(str, strp, limit, DELIMCHR, QUOTECHR);
 }
@@ -126,7 +134,7 @@ int myatoi(const char *str)
 	}
 
 	/* leave this %i alone, non-base-10 input is useful here */
-	if (sscanf(str, "%i", &ret) != 1) {
+	if (sscanf(str, N_FMT(i), &ret) != 1) {
 		return -1;
 	}
 	return ret;
@@ -219,4 +227,44 @@ time_t rpt_mktime(struct ast_tm *tm, const char *zone)
 
 	now = ast_mktime(tm, zone);
 	return now.tv_sec;
+}
+
+time_t rpt_time_monotonic(void)
+{
+	struct timespec ts;
+	
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	
+	return ts.tv_sec;
+}
+
+int macro_append(struct rpt *myrpt, const char *cmd)
+{
+	int res;
+	rpt_mutex_lock(&myrpt->lock);
+	myrpt->macrotimer = MACROTIME;
+	res = ast_str_append(&myrpt->macrobuf, 0, "%s", cmd);
+	rpt_mutex_unlock(&myrpt->lock);
+	return res;
+}
+
+void update_timer(int *timer_ptr, int elap, int end_val)
+{
+	if (!timer_ptr || !*timer_ptr) { /* if the timer value = 0 or we have a null pointer, do not update */
+		return;
+	}
+	if (*timer_ptr > end_val) {
+		*timer_ptr -= elap;
+	}
+	if (*timer_ptr < end_val) {
+		*timer_ptr = end_val;
+	}
+}
+
+void init_text_frame(struct ast_frame *wf, const char *src)
+{
+	memset(wf, 0, sizeof(struct ast_frame));
+	wf->frametype = AST_FRAME_TEXT;
+	wf->subclass.format = ast_format_slin;
+	wf->src = src;
 }

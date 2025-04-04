@@ -10,6 +10,7 @@
 #include "asterisk/channel.h"
 #include "asterisk/file.h"
 #include "asterisk/cli.h"
+#include "asterisk/pbx.h" /* functions */
 
 #include "app_rpt.h"
 #include "rpt_lock.h"
@@ -52,8 +53,8 @@ static char remdtmfstr[] = "0123456789*#ABCD";
 
 int function_ilink(struct rpt *myrpt, char *param, char *digits, int command_source, struct rpt_link *mylink)
 {
-	char *s1, *s2, tmp[300];
-	char digitbuf[MAXNODESTR], *strs[MAXLINKLIST];
+	char *s1, *s2, tmp[MAXNODESTR];
+	char digitbuf[MAXNODESTR], *strs[sizeof(myrpt->savednodes)];
 	char mode, perma;
 	struct rpt_link *l;
 	int i, r;
@@ -101,11 +102,9 @@ int function_ilink(struct rpt *myrpt, char *param, char *digits, int command_sou
 			l->disced = 1;
 			l->hasconnected = 1;
 			rpt_mutex_unlock(&myrpt->lock);
-			memset(&wf, 0, sizeof(wf));
-			wf.frametype = AST_FRAME_TEXT;
+			init_text_frame(&wf, "function_ilink:1");
 			wf.datalen = strlen(DISCSTR) + 1;
 			wf.data.ptr = DISCSTR;
-			wf.src = "function_ilink:1";
 			if (l->chan) {
 				if (l->thisconnected)
 					ast_write(l->chan, &wf);
@@ -163,7 +162,7 @@ int function_ilink(struct rpt *myrpt, char *param, char *digits, int command_sou
 
 		if (strlen(digitbuf) < 1)
 			break;
-		/* if doesnt allow link cmd, or no links active, return */
+		/* if doesn't allow link cmd, or no links active, return */
 		if (myrpt->links.next == &myrpt->links)
 			return DC_COMPLETE;
 		if ((command_source != SOURCE_RPT) &&
@@ -244,12 +243,9 @@ int function_ilink(struct rpt *myrpt, char *param, char *digits, int command_sou
 			l->disced = 2;		/* Silently disconnect */
 			rpt_mutex_unlock(&myrpt->lock);
 			ast_debug(5, "dumping link %s\n",l->name);
-
-			memset(&wf, 0, sizeof(wf));
-			wf.frametype = AST_FRAME_TEXT;
+			init_text_frame(&wf, "function_ilink:6");
 			wf.datalen = strlen(DISCSTR) + 1;
 			wf.data.ptr = DISCSTR;
-			wf.src = "function_ilink:6";
 			if (l->chan) {
 				if (l->thisconnected)
 					ast_write(l->chan, &wf);
@@ -297,11 +293,9 @@ int function_ilink(struct rpt *myrpt, char *param, char *digits, int command_sou
 				rpt_mutex_unlock(&myrpt->lock);
 				ast_debug(5, "dumping link %s\n",l->name);
 
-				memset(&wf, 0, sizeof(wf));
-				wf.frametype = AST_FRAME_TEXT;
+				init_text_frame(&wf, "function_ilink:10");
 				wf.datalen = strlen(DISCSTR) + 1;
 				wf.data.ptr = DISCSTR;
-				wf.src = "function_ilink:6";
 				if (l->chan) {
 					if (l->thisconnected)
 						ast_write(l->chan, &wf);
@@ -361,8 +355,8 @@ int function_ilink(struct rpt *myrpt, char *param, char *digits, int command_sou
 
 	case 16:					/* Restore links disconnected with "disconnect all links" command */
 		strcpy(tmp, myrpt->savednodes);	/* Make a copy */
-		finddelim(tmp, strs, MAXLINKLIST);	/* convert into substrings */
-		for (i = 0; tmp[0] && strs[i] != NULL && i < MAXLINKLIST; i++) {
+		finddelim(tmp, strs, ARRAY_LEN(strs));	/* convert into substrings */
+		for (i = 0; tmp[0] && strs[i] && i < ARRAY_LEN(strs); i++) {
 			s1 = strs[i];
 			if (s1[0] == 'X')
 				mode = 1;
@@ -626,10 +620,10 @@ int function_remote(struct rpt *myrpt, char *param, char *digitbuf, int command_
 		return DC_COMPLETE;
 
 	case 4:					/* set tx PL tone */
-		/* cant set tx tone on RBI (rx tone does both) */
+		/* can't set tx tone on RBI (rx tone does both) */
 		if (!strcmp(myrpt->remoterig, REMOTE_RIG_RBI))
 			return DC_ERROR;
-		/* cant set tx tone on ft100 (rx tone does both) */
+		/* can't set tx tone on ft100 (rx tone does both) */
 		if (!strcmp(myrpt->remoterig, REMOTE_RIG_FT100))
 			return DC_ERROR;
 		/*  eventually for the ic706 instead of just throwing the exception
@@ -717,7 +711,7 @@ int function_remote(struct rpt *myrpt, char *param, char *digitbuf, int command_
 			return DC_ERROR;
 		return DC_COMPLETEQUIET;
 	case 99:
-		/* cant log in when logged in */
+		/* can't log in when logged in */
 		if (myrpt->loginlevel[0])
 			return DC_ERROR;
 		*myrpt->loginuser = 0;
@@ -904,7 +898,7 @@ int function_autopatchup(struct rpt *myrpt, char *param, char *digitbuf, int com
 
 	ast_debug(1, "@@@@ Autopatch up\n");
 
-	if (!myrpt->callmode) {
+	if (myrpt->callmode == CALLMODE_DOWN) {
 		/* Set defaults */
 		myrpt->patchnoct = 0;
 		myrpt->patchdialtime = 0;
@@ -920,12 +914,12 @@ int function_autopatchup(struct rpt *myrpt, char *param, char *digitbuf, int com
 		if (!lparam) {
 			return DC_ERROR;
 		}
-		paramlength = finddelim(lparam, paramlist, 20);
+		paramlength = finddelim(lparam, paramlist, ARRAY_LEN(paramlist));
 		for (i = 0; i < paramlength; i++) {
 			index = matchkeyword(paramlist[i], &value, keywords);
 			if (value)
 				value = skipchars(value, "= ");
-			if (!myrpt->callmode) {
+			if (myrpt->callmode == CALLMODE_DOWN) {
 				switch (index) {
 				case 1:		/* context */
 					ast_copy_string(myrpt->patchcontext, value, sizeof(myrpt->patchcontext));
@@ -966,15 +960,15 @@ int function_autopatchup(struct rpt *myrpt, char *param, char *digitbuf, int com
 
 	/* if on call, force * into current audio stream */
 
-	if ((myrpt->callmode == 2) || (myrpt->callmode == 3)) {
+	if ((myrpt->callmode == CALLMODE_CONNECTING) || (myrpt->callmode == CALLMODE_UP)) {
 		if (!nostar)
 			myrpt->mydtmf = myrpt->p.funcchar;
 	}
-	if (myrpt->callmode) {
+	if (myrpt->callmode != CALLMODE_DOWN) {
 		rpt_mutex_unlock(&myrpt->lock);
 		return DC_COMPLETE;
 	}
-	myrpt->callmode = 1;
+	myrpt->callmode = CALLMODE_DIALING;
 	myrpt->cidx = 0;
 	myrpt->exten[myrpt->cidx] = 0;
 	rpt_mutex_unlock(&myrpt->lock);
@@ -993,12 +987,12 @@ int function_autopatchdn(struct rpt *myrpt, char *param, char *digitbuf, int com
 
 	myrpt->macropatch = 0;
 
-	if (!myrpt->callmode) {
+	if (myrpt->callmode == CALLMODE_DOWN) {
 		rpt_mutex_unlock(&myrpt->lock);
 		return DC_COMPLETE;
 	}
 
-	myrpt->callmode = 0;
+	myrpt->callmode = CALLMODE_DOWN;
 	channel_revert(myrpt);
 	rpt_mutex_unlock(&myrpt->lock);
 	rpt_telem_select(myrpt, command_source, mylink);
@@ -1112,16 +1106,7 @@ int function_macro(struct rpt *myrpt, char *param, char *digitbuf, int command_s
 		rpt_telemetry(myrpt, MACRO_NOTFOUND, NULL);
 		return DC_COMPLETE;
 	}
-	rpt_mutex_lock(&myrpt->lock);
-	if ((MAXMACRO - strlen(myrpt->macrobuf)) < strlen(val)) {
-		rpt_mutex_unlock(&myrpt->lock);
-		rpt_telem_select(myrpt, command_source, mylink);
-		rpt_telemetry(myrpt, MACRO_BUSY, NULL);
-		return DC_ERROR;
-	}
-	myrpt->macrotimer = MACROTIME;
-	strncat(myrpt->macrobuf, val, MAXMACRO - 1);
-	rpt_mutex_unlock(&myrpt->lock);
+	macro_append(myrpt, val);
 	return DC_COMPLETE;
 }
 
@@ -1157,10 +1142,9 @@ int function_localplay(struct rpt *myrpt, char *param, char *digitbuf, int comma
 
 int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_source, struct rpt_link *mylink)
 {
-	char string[50], fname[50];
+	char string[50], func[100];
 	char paramcopy[500];
 	int argc;
-	FILE *fp;
 	char *argv[101], *cp;
 	int i, j, k, r, src;
 	struct rpt_tele *telem;
@@ -1172,7 +1156,7 @@ int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 		return DC_ERROR;
 
 	ast_copy_string(paramcopy, param, sizeof(paramcopy));
-	argc = explode_string(paramcopy, argv, 100, ',', 0);
+	argc = explode_string(paramcopy, argv, ARRAY_LEN(argv), ',', 0);
 
 	if (!argc)
 		return DC_ERROR;
@@ -1581,18 +1565,16 @@ int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 				argv[i] = dtmf_tones[15];
 			j += strlen(argv[i]);
 		}
-		cp = ast_malloc(j + 100);
+		cp = ast_calloc(1, j + 100);
 		if (!cp) {
-			ast_log(LOG_WARNING, "cannot malloc");
 			return DC_ERROR;
 		}
-		memset(cp, 0, j + 100);
 		for (i = 1; i < argc; i++) {
 			if (i != 1)
 				strcat(cp, ",");
 			strcat(cp, argv[i]);
 		}
-		rpt_telemetry(myrpt, PAGE, cp);
+		rpt_telemetry(myrpt, PAGE, cp); /* cp is passed to rpt_telem_thread where it is free'd after use */
 		return DC_COMPLETE;
 
 	case 49:					/* Disable Incoming connections */
@@ -1675,9 +1657,9 @@ int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 		if (argc < 3)
 			break;
 		mdcp = ast_calloc(1, sizeof(struct mdcparams));
-		if (!mdcp)
+		if (!mdcp) {
 			return DC_ERROR;
-		memset(mdcp, 0, sizeof(*mdcp));
+		}
 		if (*argv[1] == 'C') {
 			if (argc < 5)
 				return DC_ERROR;
@@ -1686,7 +1668,7 @@ int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 		}
 		ast_copy_string(mdcp->type, argv[1], sizeof(mdcp->type));
 		mdcp->UnitID = (short) strtol(argv[2], NULL, 16);
-		rpt_telemetry(myrpt, MDC1200, (void *) mdcp);
+		rpt_telemetry(myrpt, MDC1200, (void *) mdcp); /* mdcp is passed to rpt_telem_thread where it is free'd after use */
 		return DC_COMPLETE;
 #endif
 	case 61:					/* send GPIO change */
@@ -1701,11 +1683,10 @@ int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 			}
 		/* go thru all the specs */
 		for (i = 1; i < argc; i++) {
-			if (sscanf(argv[i], "GPIO%d=%d", &j, &k) == 2 ||
-				sscanf(argv[i], "GPIO%d:%d", &j, &k) == 2) {
+			if (sscanf(argv[i], "GPIO" N_FMT(d) "=" N_FMT(d), &j, &k) == 2 || sscanf(argv[i], "GPIO" N_FMT(d) ":" N_FMT(d), &j, &k) == 2) {
 				sprintf(string, "GPIO %d %d", j, k);
 				ast_sendtext(myrpt->rxchannel, string);
-			} else if (sscanf(argv[i], "PP%d=%d", &j, &k) == 2) {
+			} else if (sscanf(argv[i], "PP" N_FMT(d) "=" N_FMT(d), &j, &k) == 2) {
 				sprintf(string, "PP %d %d", j, k);
 				ast_sendtext(myrpt->rxchannel, string);
 			}
@@ -1714,28 +1695,24 @@ int function_cop(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 			rpt_telemetry(myrpt, COMPLETE, NULL);
 		}
 		return DC_COMPLETE;
-	case 63:					/* send pre-configured APRSTT notification */
-	case 64:
-		if (argc < 2)
-			break;
-		if (!myrpt->p.aprstt)
-			break;
-		if (!myrpt->p.aprstt[0])
-			ast_copy_string(fname, APRSTT_PIPE, sizeof(fname) - 1);
-		else
-			snprintf(fname, sizeof(fname) - 1, APRSTT_SUB_PIPE, myrpt->p.aprstt);
-		fp = fopen(fname, "w");
-		if (!fp) {
-			ast_log(LOG_WARNING, "Can not open APRSTT pipe %s\n", fname);
+	case 63:					/* send pre-configured APRStt notification */
+	case 64:					/* same, but quiet */
+		if (argc < 2) {
 			break;
 		}
-		if (argc > 2)
-			fprintf(fp, "%s %c\n", argv[1], *argv[2]);
-		else
-			fprintf(fp, "%s\n", argv[1]);
-		fclose(fp);
-		if (myatoi(argv[0]) == 63)
-			rpt_telemetry(myrpt, ARB_ALPHA, (void *) argv[1]);
+		
+		if (!ast_custom_function_find("APRS_SENDTT")) {
+			ast_log(LOG_WARNING, "app_gps is not loaded.  APRStt failed\n");
+			return DC_COMPLETE;
+		}
+		snprintf(func, sizeof(func) -1, "APRS_SENDTT(%s,%c)", !myrpt->p.aprstt ? "general" : myrpt->p.aprstt, 
+			argc > 2 ? argv[2][0] : ' ');
+		/* execute the APRS_SENDTT function in app_gps*/
+		if (!ast_func_write(NULL, func, argv[1])) {
+			if (myatoi(argv[0]) == 63) {
+				rpt_telemetry(myrpt, ARB_ALPHA, (void *) argv[1]);
+			}
+		}
 		return DC_COMPLETE;
 	case 65:					/* send POCSAG page */
 		if (argc < 3)
@@ -1804,15 +1781,11 @@ int function_cmd(struct rpt *myrpt, char *param, char *digitbuf, int command_sou
 
 	if (param) {
 		if (*param == '#') {	/* to execute asterisk cli command */
-			ast_cli_command(rpt_nullfd(), param + 1);
+			ast_cli_command(rpt_nullfd(), param + 2);
 		} else {
-			cp = ast_malloc(strlen(param) + 10);
-			if (!cp) {
-				ast_log(LOG_WARNING, "Unable to malloc");
+			if (ast_asprintf(&cp, "%s &", param) < 0) {
 				return DC_ERROR;
 			}
-			memset(cp, 0, strlen(param) + 10);
-			sprintf(cp, "%s &", param);
 			ast_safe_system(cp);
 			ast_free(cp);
 		}

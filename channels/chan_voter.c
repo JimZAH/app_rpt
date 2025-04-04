@@ -33,7 +33,7 @@
 /*  Basic Information On How This Works
 Each node has a number of potential "clients" associated with it. In the voter.conf file, each stanza (category)
 is named by the node number that the clients specified within the stanza are to be associated with. Each entry
-consists of an arbitrary (realtively meaningless, just included for easy identification putposes within this
+consists of an arbitrary (relatively meaningless, just included for easy identification purposes within this
 channel driver, and has nothing to do with its operation) identifier equated to a unique password. This password
 is programmed into the client. All clients must have unique passwords, as that is what is used by this channel
 driver to identify them.
@@ -43,7 +43,7 @@ is directly associated with the node that opened it.
 
 Each client has a pair of circular buffers, one for mu-law audio data, and one for RSSI value. The allocated buffer
 length in all clients is determined by the 'buflen' parameter, which is specified in the "global" stanza in the
-voter.conf file in milliseconds, and represnted in the channel driver as number of samples (actual buffer length,
+voter.conf file in milliseconds, and represented in the channel driver as number of samples (actual buffer length,
 which is 8 * milliseconds).
 
 Every channel instance has a index ("drainindex"), indicating the next position within the physical buffer(s) where
@@ -64,7 +64,7 @@ doesn't this sound like a scene from "Spaceballs"??.. I too always drink coffee 
 During the processing of an audio frame to be presented to Asterisk, all client's buffers that are associated with
 a channel instance (node) are examined by taking an average of the RSSI value for each sample in the associated
 time period (the first 160 samples of the abstracted buffer (which is the physical buffer from drainindex to
-drainindex + 159) and whichever one, if any that has the largest RSSI average greather then zero is selected
+drainindex + 159) and whichever one, if any that has the largest RSSI average greater then zero is selected
 as the audio source for that frame. The corresponding audio buffer's contents (in the corresponding offsets)
 are presented to Asterisk, then ALL the clients corresponding RSSI data is set to 0, ALL the clients corresponding
 audio is set to quiet (0x7f). The overwriting of the buffers after their use/examination is done so that the
@@ -76,7 +76,7 @@ Voter Channel test modes:
 
 0 - Normal voting operation
 1 - Randomly pick which client of all that
-    are receving at the max rssi value to use.
+    are receiving at the max rssi value to use.
 > 1 - Cycle thru all the clients that are receiving
     at the max rssi value with a cycle time of (test mode - 1)
     frames. In other words, if you set it to 2, it will
@@ -88,7 +88,7 @@ The original intent was to change this driver to use signed linear internally,
 but after some thought, it was determined that it was prudent to continue using
 mulaw as the "standard" internal audio format (with the understanding of the slight
 degradation in dynamic range when using ADPCM resulting in doing so).  This was
-done becuase existing external entities (such as the recording files and the streaming
+done because existing external entities (such as the recording files and the streaming
 stuff) use mulaw as their transport, and changing all of that to signed linear would
 be cumbersome, inefficient and undesirable.
 
@@ -143,10 +143,10 @@ list (parameters, etc) *MUST* be identical.
 In addition, the following things must be added uniquely on each server:
 
 In the "primary" server, there needs to be a "primary connectivity" client specified for each
-"secondary" server for which it is "primary". Basicaly, this is a client that does NOTHING other
+"secondary" server for which it is "primary". Basically, this is a client that does NOTHING other
 then providing a means by which the "secondary" can determine whether the "primary" is on line.
-It is a stanard chan_voter client, with nothing else specified other then its password. Again,
-although it is a "legitmate" client (technically), its only purpose *MUST* be to allow the secondary
+It is a standard chan_voter client, with nothing else specified other then its password. Again,
+although it is a "legitimate" client (technically), its only purpose *MUST* be to allow the secondary
 server to connect to it.
 
 The "primary" server also needs to have the following in all of its instances that require redundancy:
@@ -178,7 +178,7 @@ audio directly itself, and app_rpt simply "adds" all of the other audio as appro
 
 The Voter board (RTCM) now has an option to do the same functionality itself, for a case where local repeat audio
 is desired without the "network audio delay" normally associated with Voter board (RTCM) operation, and for a radio
-that doesnt have the option of providing "in cabinet" repeat audio (along with externally provided audio) itself.
+that doesn't have the option of providing "in cabinet" repeat audio (along with externally provided audio) itself.
 
 Because of limitations with the Voter board (RTCM) hardware (being that there is only 1 audio path into the processor,
 and it either has de-emphasis in its "hardware path" of not), it is necessary if you:
@@ -266,20 +266,20 @@ struct ast_flags zeroflag = { 0 };
 #define	PING_TIME_MS 250
 #define	PING_TIMEOUT_MS 3000
 
-#define	DEFAULT_LINGER 6
+#define DEFAULT_LINGER 6
 #define DEFAULT_GTXGAIN "0.0"
 
-#define	DEFAULT_DYNTIME 30000
+#define DEFAULT_DYNTIME 30000
 
 #define MAX_MASTER_COUNT 3
-
+#define N_FMT(duf) "%30" #duf /* Maximum sscanf conversion to numeric strings */
 #define CLIENT_WARN_SECS 60
 
-#define	DELIMCHR ','
-#define	QUOTECHR 34
+#define DELIMCHR ','
+#define QUOTECHR 34
 
-#define	MAXSTREAMS 50
-#define	MAXTHRESHOLDS 20
+#define MAXSTREAMS 50
+#define MAXTHRESHOLDS 20
 
 #define	GPS_WORK_FILE "/tmp/gps%s.tmp"
 #define	GPS_DATA_FILE "/tmp/gps%s.dat"
@@ -784,13 +784,13 @@ static int16_t deemp1(int16_t input, int32_t * restrict state0)
  * \brief Break up a delimited string into a table of substrings.
  * Uses defines for the delimiters: QUOTECHR and DELIMCHR.
  * \param str		Pointer to string to process (it will be modified).
- * \param strp		Pointer to a list of substrings created, NULL will be placed at the end of the list.
- * \param limit		Maximum number of substrings to process.
+ * \param strp		An array of pointers to the start of each token + 1 or more for a NULL end token
+ * \param limit		The maximum number of tokens to find + 1 or more for the NULL end token
  * \return			Count of strings.
  */
-static int finddelim(char *str, char *strp[], int limit)
+static int finddelim(char *str, char *strp[], size_t limit)
 {
-	int i, l, inquo;
+	int i, inquo;
 
 	inquo = 0;
 	i = 0;
@@ -799,7 +799,7 @@ static int finddelim(char *str, char *strp[], int limit)
 		strp[0] = 0;
 		return 0;
 	}
-	for (l = 0; *str && (l < limit); str++) {
+	for (; *str && (i < (limit - 1)); str++) {
 		if (*str == QUOTECHR) {
 			if (inquo) {
 				*str = 0;
@@ -811,7 +811,6 @@ static int finddelim(char *str, char *strp[], int limit)
 		}
 		if ((*str == DELIMCHR) && (!inquo)) {
 			*str = 0;
-			l++;
 			strp[i++] = str + 1;
 		}
 	}
@@ -1136,7 +1135,7 @@ static int voter_text(struct ast_channel *ast, const char *text)
 			ast_log(LOG_WARNING, "Channel %s: Attempt to page on a non-flat-audio Voter config\n", ast_channel_name(ast));
 			return 0;
 		}
-		cnt = sscanf(text, "%s %d %d %n", cmd, &baud, &i, &j);
+		cnt = sscanf(text, "%s " N_FMT(d) " " N_FMT(d) " %n", cmd, &baud, &i, &j);
 		if (cnt < 3) {
 			return 0;
 		}
@@ -1226,6 +1225,10 @@ static int voter_text(struct ast_channel *ast, const char *text)
 			wf.src = PAGER_SRC;
 			memcpy(wf.data.ptr, (char *) (audio + i), FRAME_SIZE * 2);
 			f1 = ast_frdup(&wf);
+			if (!f1) {
+				ast_free(audio);
+				return 0;
+			}
 			memset(&f1->frame_list, 0, sizeof(f1->frame_list));
 			ast_mutex_lock(&o->pagerqlock);
 			AST_LIST_INSERT_TAIL(&o->pagerq, f1, frame_list);
@@ -1285,6 +1288,9 @@ static int voter_write(struct ast_channel *ast, struct ast_frame *frame)
 		fwrite(frame->data.ptr, 1, frame->datalen, fp);
 	}
 	f1 = ast_frdup(frame);
+	if (!f1) {
+		return 0;
+	}
 	if (p->gtxgain != 1.0) {
 		register int x1;
 		short* restrict sp;
@@ -1326,7 +1332,7 @@ static struct ast_frame *ast_frcat(const struct ast_frame * restrict f1, const s
 		ast_log(LOG_ERROR, "ast_frcat() called with non-matching frame types!!\n");
 		return NULL;
 	}
-	f = (struct ast_frame *) ast_calloc(1, sizeof(struct ast_frame));
+	f = ast_calloc(1, sizeof(struct ast_frame));
 	if (!f) {
 		return NULL;
 	}
@@ -1576,7 +1582,11 @@ static int voter_mix_and_send(struct voter_pvt *p, struct voter_client *maxclien
 	p->rxkey = 1;
 	x = 0;
 	if (p->dsp && p->usedtmf) {
-		struct ast_frame *f3 = ast_frdup(f1);	/* dsp_process frees frame, so dup f1 so we still have it later on */
+		struct ast_frame *f3 = ast_frdup(f1); /* dsp_process frees frame, so dup f1 so we still have it later on */
+		if (!f3) {
+			ast_frfree(f1);
+			return 0;
+		}
 		f2 = ast_dsp_process(NULL, p->dsp, f3);
 		if ((f2->frametype == AST_FRAME_DTMF_END) || (f2->frametype == AST_FRAME_DTMF_BEGIN)) {
 			if ((f2->subclass.integer != 'm') && (f2->subclass.integer != 'u')) {
@@ -1705,7 +1715,7 @@ static void *voter_primary_client(void *data)
 			fromlen = sizeof(struct sockaddr_in);
 			recvlen = recvfrom(pri_socket, buf, sizeof(buf) - 1, 0, (struct sockaddr *) &sin, &fromlen);
 
-			if (recvlen >= sizeof(VOTER_PACKET_HEADER)) {	/* if set got something worthwile */
+			if (recvlen >= sizeof(VOTER_PACKET_HEADER)) {	/* if set got something worthwhile */
 				vph = (VOTER_PACKET_HEADER *) buf;
 				ast_debug(3, "Voter %i: Got primary client rx packet, len %d payload %d challenge %s digest %08x\n", p->nodenum, (int) recvlen,
 					ntohs(vph->payload_type), vph->challenge, ntohl(vph->digest));
@@ -2509,7 +2519,7 @@ static struct ast_channel *voter_request(const char *type, struct ast_format_cap
 		val = (char *) ast_variable_retrieve(cfg, (char *) data, "streams");
 		if (val) {
 			cp = ast_strdup(val);
-			p->nstreams = finddelim(cp, p->streams, MAXSTREAMS);
+			p->nstreams = finddelim(cp, p->streams, ARRAY_LEN(p->streams));
 		}
 		val = (char *) ast_variable_retrieve(cfg, (char *) data, "txctcss");
 		if (val) {
@@ -2538,7 +2548,7 @@ static struct ast_channel *voter_request(const char *type, struct ast_format_cap
 			if (!cp) {
 				return NULL;
 			}
-			j = finddelim(cp, strs, 2);
+			j = finddelim(cp, strs, ARRAY_LEN(strs));
 			if (j < 2) {
 				ast_log(LOG_ERROR, "Channel %s: primary not specified properly\n", ast_channel_name(tmp));
 			} else {
@@ -2565,7 +2575,7 @@ static struct ast_channel *voter_request(const char *type, struct ast_format_cap
 		val = (char *) ast_variable_retrieve(cfg, (char *) data, "thresholds");
 		if (val) {
 			cp = ast_strdup(val);
-			p->nthresholds = finddelim(cp, strs, MAXTHRESHOLDS);
+			p->nthresholds = finddelim(cp, strs, MIN(ARRAY_LEN(strs), ARRAY_LEN(p->linger_thresh)));
 			for (i = 0; i < p->nthresholds; i++) {
 				cp1 = strchr(strs[i], '=');
 				p->linger_thresh[i] = p->linger;
@@ -2797,7 +2807,7 @@ static int voter_do_prio(int fd, int argc, const char *const *argv)
 		if ((!strcasecmp(argv[4], "off")) || (!strncasecmp(argv[4], "dis", 3))) {
 			newlevel = -2;
 		} else {
-			if (sscanf(argv[4], "%d", &newlevel) < 1) {
+			if (sscanf(argv[4], N_FMT(d), &newlevel) < 1) {
 				ast_cli(fd, "Error: Invalid priority value specification!!\n");
 				ast_mutex_unlock(&voter_lock);
 				return RESULT_SUCCESS;
@@ -3193,7 +3203,7 @@ static int voter_do_txlockout(int fd, int argc, const char *const *argv)
 			}
 		} else {				/* must be a comma-delimited list */
 			ast_copy_string(str, argv[3], sizeof(str) - 1);
-			n = finddelim((char *) argv[3], strs, 100);
+			n = finddelim((char *) argv[3], strs, ARRAY_LEN(strs));
 			for (i = 0; i < n; i++) {
 				if (!*strs[i]) {
 					continue;
@@ -3534,7 +3544,7 @@ static int manager_voter_status(struct mansession *ses, const struct message *m)
 	}
 	n = 0;
 	if (str) {
-		n = finddelim(str, strs, 100);
+		n = finddelim(str, strs, ARRAY_LEN(strs));
 	}
 	for (j = 1; j <= maxpvtorder; j++) {
 		for (p = pvts; p; p = p->next) {
@@ -3674,7 +3684,6 @@ static void voter_xmit_master(void)
 			memset(&client->sin, 0, sizeof(client->sin));
 		}
 	}
-	return;
 }
 
 /*!
@@ -3844,7 +3853,7 @@ static void *voter_reader(void *data)
 		if (i == udp_socket) {	
 			fromlen = sizeof(struct sockaddr_in);
 			recvlen = recvfrom(udp_socket, buf, sizeof(buf) - 1, 0, (struct sockaddr *) &sin, &fromlen);
-			/* if set got something worthwile */
+			/* if set got something worthwhile */
 			if (recvlen >= sizeof(VOTER_PACKET_HEADER)) {	
 				vph = (VOTER_PACKET_HEADER *) buf;
 				ast_debug(4, "Got rx packet, len %d payload %d challenge %s digest %08x\n", (int) recvlen,
@@ -4461,7 +4470,7 @@ static void *voter_reader(void *data)
 													/* at the same threshold still, if count is enabled and is met */
 													else if (p->count_thresh[i]
 															 && (p->threshcount++ >= p->count_thresh[i])) {
-														ast_debug(3, "Threshold %d time (%d) excedded, client %s, rssi %d\n",
+														ast_debug(3, "Threshold %d time (%d) exceeded, client %s, rssi %d\n",
 																 p->threshold, p->count_thresh[i], p->lastwon->name,
 																 p->lastwon->lastrssi);
 														p->threshold = 0;
@@ -4474,7 +4483,7 @@ static void *voter_reader(void *data)
 													maxrssi = maxclient->lastrssi;
 													break;
 												}
-												/* if doesnt match any criteria */
+												/* if doesn't match any criteria */
 												if (i == (p->nthresholds - 1)) {
 													if (DEBUG_ATLEAST(3) && p->threshold) {
 														ast_debug(3, "Nothing matches criteria any more\n");
@@ -5077,7 +5086,7 @@ static int reload(void)
 		p->nstreams = 0;
 		if (val) {
 			cp = ast_strdup(val);
-			p->nstreams = finddelim(cp, p->streams, MAXSTREAMS);
+			p->nstreams = finddelim(cp, p->streams, ARRAY_LEN(p->streams));
 		}
 		val = (char *) ast_variable_retrieve(cfg, (char *) data, "txctcss");
 		if (val) {
@@ -5107,7 +5116,7 @@ static int reload(void)
 		val = (char *) ast_variable_retrieve(cfg, (char *) data, "thresholds");
 		if (val) {
 			cp = ast_strdup(val);
-			p->nthresholds = finddelim(cp, strs, MAXTHRESHOLDS);
+			p->nthresholds = finddelim(cp, strs, MIN(ARRAY_LEN(strs), ARRAY_LEN(p->linger_thresh)));
 			for (i = 0; i < p->nthresholds; i++) {
 				cp1 = strchr(strs[i], '=');
 				p->linger_thresh[i] = p->linger;
@@ -5269,7 +5278,7 @@ static int reload(void)
 				ast_mutex_unlock(&voter_lock);
 				return -1;
 			}
-			n = finddelim(cp, strs, 40);
+			n = finddelim(cp, strs, ARRAY_LEN(strs));
 			if (n < 1) {
 				continue;
 			}
@@ -5291,7 +5300,7 @@ static int reload(void)
 			newclient = 0;
 			/* if a new one, alloc its space */
 			if (!client) {
-				client = (struct voter_client *) ast_calloc(1, sizeof(struct voter_client));
+				client = ast_calloc(1, sizeof(struct voter_client));
 				if (!client) {
 					ast_free(cp);
 					close(udp_socket);
@@ -5351,9 +5360,8 @@ static int reload(void)
 				client->drainindex = 0;
 			}
 			if (client->audio && client->old_buflen && (client->buflen != client->old_buflen)) {
-				client->audio = (uint8_t *) ast_realloc(client->audio, client->buflen);
+				client->audio = ast_realloc(client->audio, client->buflen);
 				if (!client->audio) {
-					ast_log(LOG_ERROR, "Cant realloc()\n");
 					close(udp_socket);
 					ast_config_destroy(cfg);
 					ast_mutex_unlock(&voter_lock);
@@ -5361,7 +5369,7 @@ static int reload(void)
 				}
 				memset(client->audio, 0xff, client->buflen);
 			} else if (!client->audio) {
-				client->audio = (uint8_t *) ast_malloc(client->buflen);
+				client->audio = ast_malloc(client->buflen);
 				if (!client->audio) {
 					close(udp_socket);
 					ast_config_destroy(cfg);
@@ -5371,9 +5379,8 @@ static int reload(void)
 				memset(client->audio, 0xff, client->buflen);
 			}
 			if (client->rssi && client->old_buflen && (client->buflen != client->old_buflen)) {
-				client->rssi = (uint8_t *) ast_realloc(client->rssi, client->buflen);
+				client->rssi = ast_realloc(client->rssi, client->buflen);
 				if (!client->rssi) {
-					ast_log(LOG_ERROR, "Cant realloc()\n");
 					close(udp_socket);
 					ast_config_destroy(cfg);
 					ast_mutex_unlock(&voter_lock);
@@ -5381,7 +5388,7 @@ static int reload(void)
 				}
 				memset(client->rssi, 0, client->buflen);
 			} else if (!client->rssi) {
-				client->rssi = (uint8_t *) ast_calloc(1, client->buflen);
+				client->rssi = ast_calloc(1, client->buflen);
 				if (!client->rssi) {
 					close(udp_socket);
 					ast_config_destroy(cfg);

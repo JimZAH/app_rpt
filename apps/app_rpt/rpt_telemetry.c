@@ -9,6 +9,7 @@
 
 #include "asterisk/channel.h"
 #include "asterisk/cli.h"
+#include "asterisk/pbx.h"		/* functions */
 #include "asterisk/say.h"
 #include "asterisk/indications.h"
 #include "asterisk/format_cache.h" /* use ast_format_slin */
@@ -61,10 +62,15 @@ void rpt_telem_select(struct rpt *myrpt, int command_source, struct rpt_link *my
 		return;
 	}
 	myrpt->telemmode = TELEM_HANG_TIME;
-	return;
 }
 
-int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *args)
+/*
+ * Parse a METER request for telemetry thread.
+ * This is passed in a comma separated list of items from the function table entry
+ * There should be 3 or 4 fields in the function table entry: device, channel,
+ * meter face, and  optionally: filter
+ */
+static int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *args)
 {
 	int i, res, files, filter, val;
 	int pin = 0;
@@ -88,11 +94,10 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 	struct daq_entry_tag *entry;
 
 	if (!(myargs = ast_strdup(args))) {	/* Make a local copy to slice and dice */
-		ast_log(LOG_WARNING, "Out of memory\n");
 		return -1;
 	}
 
-	i = explode_string(myargs, argv, 4, ',', 0);
+	i = explode_string(myargs, argv, ARRAY_LEN(argv), ',', 0);
 	if ((i != 4) && (i != 3)) {	/* Must have 3 or 4 substrings, no more, no less */
 		ast_log(LOG_WARNING, "Wrong number of arguments for meter telemetry function is: %d s/b 3 or 4", i);
 		ast_free(myargs);
@@ -154,7 +159,6 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 	}
 
 	if (!(meter_face = ast_strdup(p))) {
-		ast_log(LOG_WARNING, "Out of memory");
 		ast_free(myargs);
 		return -1;
 	}
@@ -167,10 +171,10 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 			ast_free(meter_face);
 			return -1;
 		}
-		*start++ = 0;			/* Points to comma delimited scaling values */
+		*start++ = 0; /* Points to comma delimited scaling values */
 		*end = 0;
-		sounds = end + 2;		/* Start of sounds part */
-		if (sscanf(start, "%f,%f,%f", &scalepre, &scalediv, &scalepost) != 3) {
+		sounds = end + 2; /* Start of sounds part */
+		if (sscanf(start, N_FMT(f) "," N_FMT(f) "," N_FMT(f), &scalepre, &scalediv, &scalepost) != 3) {
 			ast_log(LOG_WARNING, "Scale must have 3 args in meter face %s\n", argv[2]);
 			ast_free(myargs);
 			ast_free(meter_face);
@@ -196,7 +200,7 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 		/*
 		 * Parse range entries
 		 */
-		if ((numranges = explode_string(start, range_strings, MAX_DAQ_RANGES, ',', 0)) < 2) {
+		if ((numranges = explode_string(start, range_strings, ARRAY_LEN(range_strings), ',', 0)) < 2) {
 			ast_log(LOG_WARNING, "At least 2 ranges required for range() in meter face %s\n", argv[2]);
 			ast_free(myargs);
 			ast_free(meter_face);
@@ -214,7 +218,7 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 		*start++ = 0;
 		*end = 0;
 		sounds = end + 2;
-		if (2 != explode_string(start, bitphrases, 2, ',', 0)) {
+		if (2 != explode_string(start, bitphrases, ARRAY_LEN(bitphrases), ',', 0)) {
 			ast_log(LOG_WARNING, "2 phrases required for bit() in meter face %s\n", argv[2]);
 			ast_free(myargs);
 			ast_free(meter_face);
@@ -247,7 +251,7 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 	/* Select Range */
 	if (metertype == 2) {
 		for (i = 0; i < numranges; i++) {
-			if (2 != sscanf(range_strings[i], "%u-%u:", &rangemin, &rangemax)) {
+			if (2 != sscanf(range_strings[i], N_FMT(u) "-" N_FMT(u) ":", &rangemin, &rangemax)) {
 				ast_log(LOG_WARNING, "Range variable error on meter face %s\n", argv[2]);
 				ast_free(myargs);
 				ast_free(meter_face);
@@ -292,7 +296,7 @@ int handle_meter_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *ar
 	}
 
 	/* Split up the sounds string */
-	files = explode_string(sounds, sound_files, MAX_METER_FILES, ',', 0);
+	files = explode_string(sounds, sound_files, ARRAY_LEN(sound_files), ',', 0);
 	if (files == 0) {
 		ast_log(LOG_WARNING, "No sound files to say for meter %s\n", argv[2]);
 		ast_free(myargs);
@@ -388,7 +392,28 @@ void cancel_pfxtone(struct rpt *myrpt)
 	}
 }
 
-int send_tone_telemetry(struct ast_channel *chan, char *tonestring)
+static void send_tele_link(struct rpt *myrpt, char *cmd)
+{
+	char str[1028];
+	struct ast_frame wf;
+	struct rpt_link *l;
+
+	snprintf(str, sizeof(str) - 1, "T %s %s", myrpt->name, cmd);
+	init_text_frame(&wf, "send_tele_link");
+	wf.datalen = strlen(str) + 1;
+	wf.data.ptr = str;
+	l = myrpt->links.next;
+	/* give it to everyone */
+	while (l != &myrpt->links) {
+		if (l->chan && (l->mode == 1))
+			rpt_qwrite(l, &wf);
+		l = l->next;
+	}
+	rpt_telemetry(myrpt, VARCMD, cmd);
+}
+
+/*! Send telemetry tones */
+static int send_tone_telemetry(struct ast_channel *chan, char *tonestring)
 {
 	char *p, *stringp;
 	char *tonesubset;
@@ -410,7 +435,7 @@ int send_tone_telemetry(struct ast_channel *chan, char *tonestring)
 		if (!tonesubset) {
 			break;
 		}
-		if (sscanf(tonesubset, "(%d,%d,%d,%d", &f1, &f2, &duration, &amplitude) != 4) {
+		if (sscanf(tonesubset, "(" N_FMT(d) "," N_FMT(d) "," N_FMT(d) "," N_FMT(d), &f1, &f2, &duration, &amplitude) != 4) {
 			break;
 		}
 		res = play_tone_pair(chan, f1, f2, duration, amplitude);
@@ -436,7 +461,7 @@ int send_tone_telemetry(struct ast_channel *chan, char *tonestring)
 	return res;
 }
 
-int telem_any(struct rpt *myrpt, struct ast_channel *chan, char *entry)
+static int telem_any(struct rpt *myrpt, struct ast_channel *chan, char *entry)
 {
 	int res;
 	char c;
@@ -503,7 +528,10 @@ static struct telem_defaults tele_defs[] = {
 	{ "pfxtone", "|t(350,440,30000,3072)" }
 };
 
-int telem_lookup(struct rpt *myrpt, struct ast_channel *chan, char *node, char *name)
+/*! \brief Looks up a telemetry name in the config file, and does a telemetry response as configured.
+ * 4 types of telemetry are handled: Morse ID, Morse Message, Tone Sequence, and a File containing a recording.
+ */
+static int telem_lookup(struct rpt *myrpt, struct ast_channel *chan, char *node, char *name)
 {
 
 	int res;
@@ -535,7 +563,11 @@ int telem_lookup(struct rpt *myrpt, struct ast_channel *chan, char *node, char *
 	return res;
 }
 
-void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *varcmd)
+/*! \brief Processes various telemetry commands that are in the myrpt structure
+ * Used extensively when links are built or torn down and other events are processed
+ * by the rpt_master threads.
+ */
+static void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *varcmd)
 {
 	char *strs[100], *p, buf[100], c;
 	int i, j, k, n, res, vmajor, vminor;
@@ -544,7 +576,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 	unsigned int t1;
 	struct ast_tm localtm;
 
-	n = finddelim(varcmd, strs, 100);
+	n = finddelim(varcmd, strs, ARRAY_LEN(strs));
 	if (n < 1) {
 		return;
 	}
@@ -652,7 +684,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 		if (n < 2) {
 			return;
 		}
-		if (sscanf(strs[1], "%u", &t1) != 1) {
+		if (sscanf(strs[1], N_FMT(u), &t1) != 1) {
 			return;
 		}
 		t = t1;
@@ -688,7 +720,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 		if (n < 2) {
 			return;
 		}
-		if (sscanf(strs[1], "%d.%d", &vmajor, &vminor) != 2) {
+		if (sscanf(strs[1], N_FMT(d) "." N_FMT(d), &vmajor, &vminor) != 2) {
 			return;
 		}
 		if (wait_interval(myrpt, DLY_TELEM, mychannel) == -1) {
@@ -732,7 +764,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 		}
 		c = *(strs[2] + strlen(strs[2]) - 1);
 		*(strs[2] + strlen(strs[2]) - 1) = 0;
-		if (sscanf(strs[2], "%2d%d.%d", &i, &j, &k) != 3) {
+		if (sscanf(strs[2], "%2d" N_FMT(d) "." N_FMT(d), &i, &j, &k) != 3) {
 			return;
 		}
 		res = ast_say_number(mychannel, i, "", ast_channel_language(mychannel), (char *) NULL);
@@ -762,7 +794,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 		}
 		c = *(strs[3] + strlen(strs[3]) - 1);
 		*(strs[3] + strlen(strs[3]) - 1) = 0;
-		if (sscanf(strs[3], "%3d%d.%d", &i, &j, &k) != 3) {
+		if (sscanf(strs[3], "%3d" N_FMT(d) "." N_FMT(d), &i, &j, &k) != 3) {
 			return;
 		}
 		res = ast_say_number(mychannel, i, "", ast_channel_language(mychannel), (char *) NULL);
@@ -795,7 +827,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 		}
 		c = *(strs[4] + strlen(strs[4]) - 1);
 		*(strs[4] + strlen(strs[4]) - 1) = 0;
-		if (sscanf(strs[4], "%f", &f) != 1) {
+		if (sscanf(strs[4], N_FMT(f), &f) != 1) {
 			return;
 		}
 		if (myrpt->p.gpsfeet) {
@@ -807,8 +839,8 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 				f /= 3.2808399;
 			}
 		}
-		sprintf(buf, "%0.1f", f);
-		if (sscanf(buf, "%d.%d", &i, &j) != 2) {
+		snprintf(buf, sizeof(buf), "%0.1f", f);
+		if (sscanf(buf, N_FMT(d) "." N_FMT(d), &i, &j) != 2) {
 			return;
 		}
 		res = ast_say_number(mychannel, i, "", ast_channel_language(mychannel), (char *) NULL);
@@ -940,7 +972,6 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
 		return;
 	}
 	ast_log(LOG_WARNING, "Got unknown link telemetry command: %s\n", strs[0]);
-	return;
 }
 
 /*! \brief Try to catch setting active_telem NULL when we weren't what it was set to
@@ -960,7 +991,7 @@ void handle_varcmd_tele(struct rpt *myrpt, struct ast_channel *mychannel, char *
  */
 void *rpt_tele_thread(void *this)
 {
-	int res = 0, haslink, hastx, hasremote, imdone = 0, unkeys_queued, x;
+	int res = 0, haslink, hastx, hasremote, imdone = 0, unkeys_queued, x, n = 1;
 	struct rpt_tele *mytele = (struct rpt_tele *) this;
 	struct rpt_tele *tlist;
 	struct rpt *myrpt;
@@ -968,16 +999,17 @@ void *rpt_tele_thread(void *this)
 	struct ast_channel *mychannel = NULL;
 	int id_malloc = 0, m;
 	char *p, *ct, *ct_copy, *ident, *nodename;
-	time_t t, t1, was;
+	time_t t, t1, t_mono, was_mono;
 	struct ast_tm localtm;
-	char lbuf[MAXLINKLIST], *strs[MAXLINKLIST];
+	char **strs;
 	int i, j, k, ns, rbimode;
-	unsigned int u;
 	char mhz[MAXREMSTR], decimals[MAXREMSTR], mystr[200];
-	char lat[100], lon[100], elev[100], c;
-	FILE *fp;
 	float f;
-	struct stat mystat;
+	unsigned long long u_mono;
+	char gps_data[100], lat[LAT_SZ], lon[LON_SZ], elev[ELEV_SZ], c;
+	struct ast_str *lbuf = NULL;
+	enum rpt_conf_type type;
+
 #ifdef	_MDC_ENCODE_H_
 	struct mdcparams *mdcp;
 #endif
@@ -1017,7 +1049,7 @@ void *rpt_tele_thread(void *this)
 	ast_format_cap_append(cap, ast_format_slin, 0);
 
 	/* allocate a pseudo-channel thru asterisk */
-	mychannel = ast_request("DAHDI", cap, NULL, NULL, "pseudo", NULL);
+	mychannel = rpt_request_pseudo_chan(cap);
 	ao2_ref(cap, -1);
 
 	if (!mychannel) {
@@ -1058,7 +1090,18 @@ void *rpt_tele_thread(void *this)
 	/* make a conference for the tx */
 	/* If the telemetry is only intended for a local audience, only connect the ID audio to the local tx conference so linked systems can't hear it */
 	/* first put the channel on the conference in announce mode */
-	if (rpt_conf_add(mychannel, myrpt, mytele->mode == ID1 || mytele->mode == PLAYBACK || mytele->mode == TEST_TONE || mytele->mode == STATS_GPS_LEGACY ? RPT_CONF : RPT_TELECONF, RPT_CONF_CONFANN)) {
+	switch (mytele->mode) {
+		case ID1:
+		case PLAYBACK:
+		case TEST_TONE:
+		case STATS_GPS_LEGACY:
+			type = RPT_CONF;
+			break;
+		default:
+			type = RPT_TELECONF;
+			break;
+	}
+	if (rpt_conf_add(mychannel, myrpt, type, RPT_CONF_CONFANN)) {
 		rpt_mutex_lock(&myrpt->lock);
 		goto abort;
 	}
@@ -1140,9 +1183,9 @@ void *rpt_tele_thread(void *this)
 			res = -1;
 			if (mytele->submode.p) {
 				myrpt->noduck = 1;
-				res = ast_playtones_start(myrpt->txchannel, 0, (char *) mytele->submode.p, 0);
-				while (ast_channel_generatordata(myrpt->txchannel)) {
-					if (ast_safe_sleep(myrpt->txchannel, 50)) {
+				res = ast_playtones_start(mychannel, 0, (char *) mytele->submode.p, 0);
+				while (ast_channel_generatordata(mychannel)) {
+					if (ast_safe_sleep(mychannel, 50)) {
 						res = -1;
 						break;
 					}
@@ -1169,10 +1212,10 @@ void *rpt_tele_thread(void *this)
 					break;
 				}
 			}
-			res = mdc1200gen_start(myrpt->txchannel, mdcp->type, mdcp->UnitID, mdcp->DestID, mdcp->subcode);
+			res = mdc1200gen_start(mychannel, mdcp->type, mdcp->UnitID, mdcp->DestID, mdcp->subcode);
 			ast_free(mdcp);
-			while (ast_channel_generatordata(myrpt->txchannel)) {
-				if (ast_safe_sleep(myrpt->txchannel, 50)) {
+			while (ast_channel_generatordata(mychannel)) {
+				if (ast_safe_sleep(mychannel, 50)) {
 					res = -1;
 					break;
 				}
@@ -1183,7 +1226,7 @@ void *rpt_tele_thread(void *this)
 #endif
 	case UNKEY:
 	case LOCUNKEY:
-		if (myrpt->patchnoct && myrpt->callmode) {	/* If no CT during patch configured, then don't send one */
+		if (myrpt->patchnoct && (myrpt->callmode != CALLMODE_DOWN)) { /* If no CT during patch configured, then don't send one */
 			imdone = 1;
 			break;
 		}
@@ -1223,11 +1266,7 @@ void *rpt_tele_thread(void *this)
 			}
 			ast_safe_sleep(mychannel, ctint);
 			rpt_mutex_lock(&myrpt->lock);
-			if (myrpt->unkeytocttimer < ctint) {
-				myrpt->unkeytocttimer = 0;
-			} else {
-				myrpt->unkeytocttimer -= ctint;
-			}
+			update_timer(&myrpt->unkeytocttimer, ctint, 0);
 			rpt_mutex_unlock(&myrpt->lock);
 		}
 
@@ -1246,13 +1285,22 @@ void *rpt_tele_thread(void *this)
 		rpt_mutex_unlock(&myrpt->lock);
 
 treataslocal:
-
+		lbuf = ast_str_create(RPT_AST_STR_INIT_SIZE);
+		if (!lbuf) {
+			goto abort;
+		}
 		rpt_mutex_lock(&myrpt->lock);
 		/* get all the nodes */
-		__mklinklist(myrpt, NULL, lbuf, 0);
+		n = __mklinklist(myrpt, NULL, &lbuf, 0) + 1;
 		rpt_mutex_unlock(&myrpt->lock);
+		strs = ast_malloc(n * sizeof(char *));
+		if (!strs) {
+			ast_free(lbuf);
+			goto abort;
+		}
 		/* parse em */
-		ns = finddelim(lbuf, strs, MAXLINKLIST);
+		ns = finddelim(ast_str_buffer(lbuf), strs, n);
+		ast_free(lbuf);
 		haslink = 0;
 		for (i = 0; i < ns; i++) {
 			char *cpr = strs[i] + 1;
@@ -1261,7 +1309,7 @@ treataslocal:
 			if (ISRANGER(cpr))
 				haslink = 1;
 		}
-
+		ast_free(strs);
 		/* if has a RANGER node connected to it, use special telemetry for RANGER mode */
 		if (haslink) {
 			res = telem_lookup(myrpt, mychannel, myrpt->name, "ranger");
@@ -1393,7 +1441,7 @@ treataslocal:
 				rpt_mutex_lock(&myrpt->lock);
 				goto abort;
 			}
-			sprintf(mystr, "%04x", myrpt->lastunit);
+			snprintf(mystr, sizeof(mystr), "%04x", myrpt->lastunit);
 			myrpt->lastunit = 0;
 			ast_say_character_str(mychannel, mystr, NULL, ast_channel_language(mychannel));
 			break;
@@ -1407,7 +1455,7 @@ treataslocal:
 			imdone = 1;
 			break;
 		}
-		if (myrpt->patchnoct && myrpt->callmode) {	/* If no CT during patch configured, then don't send one */
+		if (myrpt->patchnoct && (myrpt->callmode != CALLMODE_DOWN)) { /* If no CT during patch configured, then don't send one */
 			imdone = 1;
 			break;
 		}
@@ -1457,11 +1505,7 @@ treataslocal:
 					}
 					ast_safe_sleep(mychannel, ctint);
 					rpt_mutex_lock(&myrpt->lock);
-					if (myrpt->unkeytocttimer < ctint) {
-						myrpt->unkeytocttimer = 0;
-					} else {
-						myrpt->unkeytocttimer -= ctint;
-					}
+					update_timer(&myrpt->unkeytocttimer, ctint, 0);
 					rpt_mutex_unlock(&myrpt->lock);
 				}
 			}
@@ -1521,11 +1565,7 @@ treataslocal:
 			}
 			ast_safe_sleep(mychannel, ctint);
 			rpt_mutex_lock(&myrpt->lock);
-			if (mytele->mylink.linkunkeytocttimer < ctint) {
-				mytele->mylink.linkunkeytocttimer = 0;
-			} else {
-				mytele->mylink.linkunkeytocttimer -= ctint;
-			}
+			update_timer(&mytele->mylink.linkunkeytocttimer, ctint, 0);
 			rpt_mutex_unlock(&myrpt->lock);
 		}
 		l = myrpt->links.next;
@@ -1689,7 +1729,7 @@ treataslocal:
 #ifdef HAVE_SYS_IO
 			if (ioperm(myrpt->p.iobase, 1, 1) == -1) {
 				rpt_mutex_unlock(&myrpt->lock);
-				ast_log(LOG_WARNING, "Cant get io permission on IO port %x hex\n", myrpt->p.iobase);
+				ast_log(LOG_WARNING, "Can't get io permission on IO port %x hex\n", myrpt->p.iobase);
 				res = -1;
 			} else {
 				res = setrbi(myrpt);
@@ -2086,7 +2126,7 @@ treataslocal:
 		}
 		rpt_mutex_unlock(&myrpt->lock);
 		res = saynode(myrpt, mychannel, myrpt->name);
-		if (myrpt->callmode) {
+		if (myrpt->callmode != CALLMODE_DOWN) {
 			hastx = 1;
 			res = ast_streamfile(mychannel, "rpt/autopatch_on", ast_channel_language(mychannel));
 			if (!res) {
@@ -2141,12 +2181,22 @@ treataslocal:
 		imdone = 1;
 		break;
 	case FULLSTATUS:
+		lbuf = ast_str_create(RPT_AST_STR_INIT_SIZE);
+		if (!lbuf) {
+			goto abort;
+		}
 		rpt_mutex_lock(&myrpt->lock);
 		/* get all the nodes */
-		__mklinklist(myrpt, NULL, lbuf, 0);
+		n = __mklinklist(myrpt, NULL, &lbuf, 0) + 1;
 		rpt_mutex_unlock(&myrpt->lock);
+		strs = ast_malloc(n * sizeof(char *));
+		if (!strs) {
+			ast_free(lbuf);
+			goto abort;
+		}
 		/* parse em */
-		ns = finddelim(lbuf, strs, MAXLINKLIST);
+		ns = finddelim(ast_str_buffer(lbuf), strs, n);
+		ast_free(lbuf);
 		/* sort em */
 		if (ns)
 			qsort((void *) strs, ns, sizeof(char *), mycompar);
@@ -2155,7 +2205,7 @@ treataslocal:
 			break;
 		hastx = 0;
 		res = saynode(myrpt, mychannel, myrpt->name);
-		if (myrpt->callmode) {
+		if (myrpt->callmode != CALLMODE_DOWN) {
 			hastx = 1;
 			res = ast_stream_and_wait(mychannel, "rpt/autopatch_on", "");
 		}
@@ -2180,6 +2230,7 @@ treataslocal:
 			}
 			res = ast_stream_and_wait(mychannel, s, "");
 		}
+		ast_free(strs);
 		if (!hastx) {
 			res = ast_stream_and_wait(mychannel, "rpt/repeat_only", "");
 		}
@@ -2215,7 +2266,7 @@ treataslocal:
 		imdone = 1;
 		break;
 	case PARROT:				/* Repeat stuff */
-		sprintf(mystr, PARROTFILE, myrpt->name, mytele->parrot);
+		snprintf(mystr, sizeof(mystr), PARROTFILE, myrpt->name, mytele->parrot);
 		if (ast_fileexists(mystr, NULL, ast_channel_language(mychannel)) <= 0) {
 			imdone = 1;
 			myrpt->parrotstate = 0;
@@ -2224,9 +2275,9 @@ treataslocal:
 		if (wait_interval(myrpt, DLY_PARROT, mychannel) == -1) {
 			break;
 		}
-		sprintf(mystr, PARROTFILE, myrpt->name, mytele->parrot);
+		snprintf(mystr, sizeof(mystr), PARROTFILE, myrpt->name, mytele->parrot);
 		res = ast_stream_and_wait(mychannel, mystr, "");
-		sprintf(mystr, PARROTFILE, myrpt->name, mytele->parrot);
+		snprintf(mystr, sizeof(mystr), PARROTFILE, myrpt->name, mytele->parrot);
 		strcat(mystr, ".wav");
 		unlink(mystr);
 		imdone = 1;
@@ -2337,24 +2388,24 @@ treataslocal:
 		break;
 	case STATS_GPS:
 	case STATS_GPS_LEGACY:
-		fp = fopen(GPSFILE, "r");
-		if (!fp) {
+		
+		/* If the app_gps custom function GPS_READ does not exist, let them know */
+		if (!ast_custom_function_find("GPS_READ")) {
+			saycharstr(mychannel, "GPS");
+			sayfile(mychannel, "rpt/off");
 			break;
 		}
-		if (fstat(fileno(fp), &mystat) == -1) {
+		if (ast_func_read(NULL, "GPS_READ()", gps_data, sizeof(gps_data))) {
 			break;
 		}
-		if (mystat.st_size >= 100) {
+
+		/* gps_data format monotonic time, epoch, latitude, longitude, elevation */
+		if (sscanf(gps_data, N_FMT(llu) " %*u " S_FMT(LAT_SZ) S_FMT(LON_SZ) S_FMT(ELEV_SZ), &u_mono, lat, lon, elev) != 4) {
 			break;
 		}
-		elev[0] = 0;
-		if (fscanf(fp, "%u %s %s %s", &u, lat, lon, elev) < 3) {
-			break;
-		}
-		fclose(fp);
-		was = (time_t) u;
-		time(&t);
-		if ((was + GPS_VALID_SECS) < t) {
+		was_mono = (time_t) u_mono;
+		t_mono = rpt_time_monotonic();
+		if ((was_mono + GPS_VALID_SECS) < t_mono) {
 			break;
 		} else if (wait_interval(myrpt, DLY_TELEM, mychannel) == -1) {
 			break;
@@ -2365,7 +2416,7 @@ treataslocal:
 		}
 		c = lat[strlen(lat) - 1];
 		lat[strlen(lat) - 1] = 0;
-		if (sscanf(lat, "%2d%d.%d", &i, &j, &k) != 3) {
+		if (sscanf(lat, "%2d" N_FMT(d) "." N_FMT(d), &i, &j, &k) != 3) {
 			break;
 		}
 		res = ast_say_number(mychannel, i, "", ast_channel_language(mychannel), (char *) NULL);
@@ -2392,7 +2443,7 @@ treataslocal:
 		}
 		c = lon[strlen(lon) - 1];
 		lon[strlen(lon) - 1] = 0;
-		if (sscanf(lon, "%3d%d.%d", &i, &j, &k) != 3) {
+		if (sscanf(lon, "%3d" N_FMT(d) "." N_FMT(d), &i, &j, &k) != 3) {
 			break;
 		}
 		res = ast_say_number(mychannel, i, "", ast_channel_language(mychannel), (char *) NULL);
@@ -2425,7 +2476,7 @@ treataslocal:
 		}
 		c = elev[strlen(elev) - 1];
 		elev[strlen(elev) - 1] = 0;
-		if (sscanf(elev, "%f", &f) != 1) {
+		if (sscanf(elev, N_FMT(f), &f) != 1) {
 			break;
 		}
 		if (myrpt->p.gpsfeet) {
@@ -2437,8 +2488,8 @@ treataslocal:
 				f /= 3.2808399;
 			}
 		}
-		sprintf(mystr, "%0.1f", f);
-		if (sscanf(mystr, "%d.%d", &i, &j) != 2) {
+		snprintf(mystr, sizeof(mystr), "%0.1f", f);
+		if (sscanf(mystr, N_FMT(d) "." N_FMT(d), &i, &j) != 2) {
 			break;
 		}
 		res = ast_say_number(mychannel, i, "", ast_channel_language(mychannel), (char *) NULL);
@@ -2601,14 +2652,14 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 {
 	struct rpt_tele *tele;
 	struct rpt_link *mylink = NULL;
-	int res, i, ns;
-	char *v1, *v2, mystr[1024], *p, haslink, lat[100], lon[100], elev[100];
-	char lbuf[MAXLINKLIST], *strs[MAXLINKLIST];
-	time_t t, was;
-	unsigned int k;
-	FILE *fp;
-	struct stat mystat;
+	int res, i, ns, n = 1;
+	char *v1, *v2, mystr[1024], *p, haslink;
+	char **strs;
 	struct rpt_link *l;
+	time_t t, t_mono, was_mono;
+	unsigned long long u_mono;
+	char gps_data[100], lat[25], lon[25], elev[25];
+	struct ast_str *lbuf;
 
 	ast_debug(6, "Tracepoint rpt_telemetry() entered mode=%i\n", mode);
 
@@ -2717,7 +2768,7 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 			if ((!mylink) || (mylink->name[0] == '0')) {
 				return;
 			}
-			sprintf(mystr, "CONNECTED,%s,%s", myrpt->name, mylink->name);
+			snprintf(mystr, sizeof(mystr), "CONNECTED,%s,%s", myrpt->name, mylink->name);
 			send_tele_link(myrpt, mystr);
 			return;
 		case CONNFAIL:
@@ -2725,7 +2776,7 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 			if ((!mylink) || (mylink->name[0] == '0')) {
 				return;
 			}
-			sprintf(mystr, "CONNFAIL,%s", mylink->name);
+			snprintf(mystr, sizeof(mystr), "CONNFAIL,%s", mylink->name);
 			send_tele_link(myrpt, mystr);
 			return;
 		case REMDISC:
@@ -2754,47 +2805,43 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 			if (haslink) {
 				return;
 			}
-			sprintf(mystr, "REMDISC,%s", mylink->name);
+			snprintf(mystr, sizeof(mystr), "REMDISC,%s", mylink->name);
 			send_tele_link(myrpt, mystr);
 			return;
 		case STATS_TIME:
 			t = time(NULL);
-			sprintf(mystr, "STATS_TIME,%u", (unsigned int) t);
+			snprintf(mystr, sizeof(mystr), "STATS_TIME,%u", (unsigned int) t);
 			send_tele_link(myrpt, mystr);
 			return;
 		case STATS_VERSION:
-			sprintf(mystr, "STATS_VERSION,%d.%d", VERSION_MAJOR, VERSION_MINOR);
+			snprintf(mystr, sizeof(mystr), "STATS_VERSION,%d.%d", VERSION_MAJOR, VERSION_MINOR);
 			send_tele_link(myrpt, mystr);
 			return;
 		case STATS_GPS:
-			fp = fopen(GPSFILE, "r");
-			if (!fp) {
+			
+			/* If the app_gps custom function GPS_READ exists, read the GPS position */
+			if (!ast_custom_function_find("GPS_READ")) {
+				break;
+			}				
+			if (ast_func_read(NULL, "GPS_READ()", gps_data, sizeof(gps_data))) {
 				break;
 			}
-			if (fstat(fileno(fp), &mystat) == -1) {
-				fclose(fp);
+
+			/* gps_data format monotonic time, epoch, latitude, longitude, elevation */
+			if (sscanf(gps_data, N_FMT(llu) " %*u " S_FMT(LAT_SZ) S_FMT(LON_SZ) S_FMT(ELEV_SZ), &u_mono, lat, lon, elev) != 4) {
 				break;
 			}
-			if (mystat.st_size >= 100) {
-				fclose(fp);
+
+			was_mono = (time_t) u_mono;
+			t_mono = rpt_time_monotonic();
+			if ((was_mono + GPS_VALID_SECS) < t_mono) {
 				break;
 			}
-			elev[0] = 0;
-			if (fscanf(fp, "%u %s %s %s", &k, lat, lon, elev) < 3) {
-				fclose(fp);
-				break;
-			}
-			fclose(fp);
-			was = (time_t) k;
-			time(&t);
-			if ((was + GPS_VALID_SECS) < t) {
-				break;
-			}
-			sprintf(mystr, "STATS_GPS,%s,%s,%s,%s", myrpt->name, lat, lon, elev);
+			snprintf(mystr, sizeof(mystr), "STATS_GPS,%s,%s,%s,%s", myrpt->name, lat, lon, elev);
 			send_tele_link(myrpt, mystr);
 			return;
 		case ARB_ALPHA:
-			sprintf(mystr, "ARB_ALPHA,%s", (char *) data);
+			snprintf(mystr, sizeof(mystr), "ARB_ALPHA,%s", (char *) data);
 			send_tele_link(myrpt, mystr);
 			return;
 		case REV_PATCH:
@@ -2804,35 +2851,35 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 					p[i] = '^';
 				}
 			}
-			sprintf(mystr, "REV_PATCH,%s,%s", myrpt->name, p);
+			snprintf(mystr, sizeof(mystr), "REV_PATCH,%s,%s", myrpt->name, p);
 			send_tele_link(myrpt, mystr);
 			return;
 		case LASTNODEKEY:
 			if (!myrpt->lastnodewhichkeyedusup[0]) {
 				return;
 			}
-			sprintf(mystr, "LASTNODEKEY,%s", myrpt->lastnodewhichkeyedusup);
+			snprintf(mystr, sizeof(mystr), "LASTNODEKEY,%s", myrpt->lastnodewhichkeyedusup);
 			send_tele_link(myrpt, mystr);
 			return;
 		case LASTUSER:
 			if ((!myrpt->lastdtmfuser[0]) && (!myrpt->curdtmfuser[0])) {
 				return;
 			} else if (myrpt->lastdtmfuser[0] && (!myrpt->curdtmfuser[0])) {
-				sprintf(mystr, "LASTUSER,%s", myrpt->lastdtmfuser);
+				snprintf(mystr, sizeof(mystr), "LASTUSER,%s", myrpt->lastdtmfuser);
 			} else if ((!myrpt->lastdtmfuser[0]) && myrpt->curdtmfuser[0]) {
-				sprintf(mystr, "LASTUSER,%s", myrpt->curdtmfuser);
+				snprintf(mystr, sizeof(mystr), "LASTUSER,%s", myrpt->curdtmfuser);
 			} else {
 				if (strcmp(myrpt->curdtmfuser, myrpt->lastdtmfuser)) {
-					sprintf(mystr, "LASTUSER,%s,%s", myrpt->curdtmfuser, myrpt->lastdtmfuser);
+					snprintf(mystr, sizeof(mystr), "LASTUSER,%s,%s", myrpt->curdtmfuser, myrpt->lastdtmfuser);
 				} else {
-					sprintf(mystr, "LASTUSER,%s", myrpt->curdtmfuser);
+					snprintf(mystr, sizeof(mystr), "LASTUSER,%s", myrpt->curdtmfuser);
 				}
 			}
 			send_tele_link(myrpt, mystr);
 			return;
 		case STATUS:
 			rpt_mutex_lock(&myrpt->lock);
-			sprintf(mystr, "STATUS,%s,%d", myrpt->name, myrpt->callmode);
+			snprintf(mystr, sizeof(mystr), "STATUS,%s,%d", myrpt->name, myrpt->callmode);
 			/* make our own list of links */
 			l = myrpt->links.next;
 			while (l != &myrpt->links) {
@@ -2859,13 +2906,23 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 			send_tele_link(myrpt, mystr);
 			return;
 		case FULLSTATUS:
+			lbuf = ast_str_create(RPT_AST_STR_INIT_SIZE);
+			if (!lbuf) {
+				return;
+			}
+
 			rpt_mutex_lock(&myrpt->lock);
-			sprintf(mystr, "STATUS,%s,%d", myrpt->name, myrpt->callmode);
+			snprintf(mystr, sizeof(mystr), "STATUS,%s,%d", myrpt->name, myrpt->callmode);
 			/* get all the nodes */
-			__mklinklist(myrpt, NULL, lbuf, 0);
+			n = __mklinklist(myrpt, NULL, &lbuf, 0) + 1;
 			rpt_mutex_unlock(&myrpt->lock);
+			strs = ast_malloc(n * sizeof(char *));
+			if (!strs) {
+				ast_free(lbuf);
+				return;
+			}
 			/* parse em */
-			ns = finddelim(lbuf, strs, MAXLINKLIST);
+			ns = finddelim(ast_str_buffer(lbuf), strs, n);
 			/* sort em */
 			if (ns)
 				qsort((void *) strs, ns, sizeof(char *), mycompar);
@@ -2888,6 +2945,8 @@ void rpt_telemetry(struct rpt *myrpt, int mode, void *data)
 				snprintf(mystr + strlen(mystr), sizeof(mystr), ",%c%s", s, strs[i]);
 			}
 			send_tele_link(myrpt, mystr);
+			ast_free(lbuf);
+			ast_free(strs);
 			return;
 		}
 	}

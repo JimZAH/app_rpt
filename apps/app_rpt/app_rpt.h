@@ -1,7 +1,6 @@
-
 #define VERSION_MAJOR 3
-#define VERSION_MINOR 0
-#define VERSION_PATCH 3
+#define VERSION_MINOR 4
+#define VERSION_PATCH 2
 
 /* 99% of the DSP code in app_rpt exists in dsp.c as private functions. This code can mostly be
 	converted to use public dsp.h API.
@@ -22,13 +21,8 @@
 #endif
 
 /*! \note <sys/io.h> is not portable to all architectures, so don't call non-portable functions if we don't have them */
-#if defined(__alpha__) || defined(__x86_64__) || defined(__ia64__)
+#if __has_include(<sys/io.h>)
 #define HAVE_SYS_IO
-#else
-#pragma GCC diagnostic push
-#pragma GCC diagnostic warning "-Wcpp"
-#warning sys.io is not available on this architecture and some functionality will be disabled
-#pragma GCC diagnostic pop
 #endif
 
 /* Un-comment the following to include support for notch filters in the
@@ -76,7 +70,8 @@ typedef struct {
 /* maximum digits in DTMF buffer, and seconds after * for DTMF command timeout */
 #define	MAXDTMF 32
 #define	MAXMACRO 2048
-#define	MAXLINKLIST 5120
+#define	MAXNODES 500			  /* Maximum number of nodes allowed in the link list */
+#define	RPT_AST_STR_INIT_SIZE 500 /* initial guess for ast_str size */
 #define	LINKLISTTIME 10000
 #define	LINKLISTSHORTTIME 200
 #define	LINKPOSTTIME 30000
@@ -101,21 +96,29 @@ typedef struct {
 #define	MAX_RETRIES 5
 #define	MAX_RETRIES_PERM 1000000000
 
-#define	APRSTT_PIPE "/tmp/aprs_ttfifo"
-#define	APRSTT_SUB_PIPE "/tmp/aprs_ttfifo_%s"
-
 #define	REDUNDANT_TX_TIME 2000
 
-#define	RETRY_TIMER_MS 5000
+#define RETRY_TIMER_MS 5000
 
-#define	PATCH_DIALPLAN_TIMEOUT 1500
+#define PATCH_DIALPLAN_TIMEOUT 1500
 
-#define	RPT_LOCKOUT_SECS 10
+#define RPT_LOCKOUT_SECS 10
+#define RPT_CMD_SZ 299
+#define RPT_SRC_SZ 299
+#define RPT_DEST_SZ 299
+#define RPT_TMP_SZ 511
+#define RSSI_SZ 31
+#define RPT_TO_STRING(x) #x
+#define S_FMT(x) "%" RPT_TO_STRING(x) "s "
+#define N_FMT(duf) "%30" #duf /* Maximum sscanf conversion to numeric strings */
+#define LON_SZ 24
+#define LAT_SZ 24
+#define ELEV_SZ 24
 
 #define MAXPEERSTR 31
-#define	MAXREMSTR 15
+#define MAXREMSTR 15
 
-#define	MONITOR_DISK_BLOCKS_PER_MINUTE 38
+#define MONITOR_DISK_BLOCKS_PER_MINUTE 38
 
 #define	DEFAULT_MONITOR_MIN_DISK_BLOCKS 10000
 #define	DEFAULT_REMOTE_INACT_TIMEOUT (15 * 60)
@@ -161,7 +164,6 @@ typedef struct {
 #define	EXTNODEFILE "/var/lib/asterisk/rpt_extnodes"
 #define	NODENAMES "rpt/nodenames"
 #define	PARROTFILE "/tmp/parrot_%s_%u"
-#define	GPSFILE "/tmp/gps.dat"
 
 #define	GPS_VALID_SECS 60
 #define	GPS_UPDATE_SECS 30
@@ -205,8 +207,7 @@ typedef struct {
 #define	SIMPLEX_PATCH_DELAY 25
 #define	SIMPLEX_PHONE_DELAY 25
 
-#define	RX_LINGER_TIME 50
-#define	RX_LINGER_TIME_IAXKEY 150
+#define RX_LINGER_TIME 50
 
 #define	STATPOST_PROGRAM "/usr/bin/wget,-q,--output-document=/dev/null,--no-check-certificate"
 
@@ -280,6 +281,14 @@ enum  rpt_dns_method {
 	LOOKUP_FILE
 };
 
+enum patch_call_mode {
+	CALLMODE_DOWN,
+	CALLMODE_DIALING,
+	CALLMODE_CONNECTING,
+	CALLMODE_UP,
+	CALLMODE_FAILED
+};
+
 #define DEFAULT_NODE_LOOKUP_METHOD LOOKUP_BOTH
 #define DEFAULT_TELEMDUCKDB "-9"
 #define	DEFAULT_RPT_TELEMDEFAULT 1
@@ -328,9 +337,9 @@ struct rpt_chan_stat {
 #define MAX_STAT_LINKS 256
 #define POLITEID 30000
 #define FUNCTDELAY 1500
-
-#define	MAXXLAT 20
-#define	MAXXLATTIME 3
+#define TMP_SIZE 256 /* Size of tmp char* */
+#define MAXXLAT 20
+#define MAXXLATTIME 3
 
 #define MAX_SYSSTATES 10
 
@@ -340,7 +349,13 @@ struct rpt_chan_stat {
 #define DISCSTR "!!DISCONNECT!!"
 #define NEWKEYSTR "!NEWKEY!"
 #define NEWKEY1STR "!NEWKEY1!"
-#define IAXKEYSTR "!IAXKEY!"
+
+/*! \brief Repeater link connection newkey handshake state */
+enum newkey { 
+	RADIO_KEY_ALLOWED, /*!< AST_CONTROL_RADIO_KEY is allowed on repeater channel */
+	RADIO_KEY_ALLOWED_REDUNDANT, /*!< "!NEWKEY!" - AST_CONTROL_RADIO_KEY allowed on the repeater channel */
+	RADIO_KEY_NOT_ALLOWED /*!< "!NEWKEY1!" message - AST_CONTROL_RADIO_KEY are not allowed on the repeater channel */
+};
 
 struct vox {
 	float	speech_energy;
@@ -374,41 +389,42 @@ struct rpt;
 struct rpt_link {
 	struct rpt_link *next;
 	struct rpt_link *prev;
-	char	mode;			/* 1 if in tx mode */
-	char	isremote;
-	char	phonemode;
-	char	phonevox;		/* vox the phone */
-	char	phonemonitor;		/* no tx or funs for the phone */
-	char	name[MAXNODESTR];	/* identifier (routing) string */
-	char	lasttx;
-	char	lasttx1;
-	char	lastrx;
-	char	lastrealrx;
-	char	lastrx1;
-	char	wouldtx;
-	char	connected;
-	char	hasconnected;
-	char	perma;
-	char	thisconnected;
-	char	outbound;
-	char	disced;
-	char	killme;
-	long	elaptime;
-	long	disctime;
-	long 	retrytimer;
-	long	retxtimer;
-	long	rerxtimer;
-	long	rxlingertimer;
-	int     rssi;
+	char mode; /* 1 if in tx mode */
+	char isremote;
+	char phonemode;
+	char phonevox;		   /* vox the phone */
+	char phonemonitor;	   /* no tx or funs for the phone */
+	char name[MAXNODESTR]; /* identifier (routing) string */
+	char lasttx;
+	char lasttx1;
+	char lastrx;
+	char lastrealrx;
+	char lastrx1;
+	unsigned int last_frame_sent:1; /* We have written a single frame */
+	char wouldtx;
+	char connected;
+	char hasconnected;
+	char perma;
+	char thisconnected;
+	char outbound;
+	char disced;
+	char killme;
+	long elaptime;
+	int disctime;
+	int	retrytimer;
+	int	retxtimer;
+	int	rerxtimer;
+	int	rxlingertimer;
+	int	rssi;
 	int	retries;
 	int	max_retries;
 	int	reconnects;
 	long long connecttime;
 	struct ast_channel *chan;	
-	struct ast_channel *pchan;	
-	char	linklist[MAXLINKLIST];
+	struct ast_channel *pchan;
+	struct ast_str *linklist;
 	time_t	linklistreceived;
-	long	linklisttimer;
+	int	linklisttimer;
 	int	dtmfed;
 	int linkunkeytocttimer;
 	struct timeval lastlinktv;
@@ -418,8 +434,7 @@ struct rpt_link {
 	char wasvox;
 	int voxtotimer;
 	char voxtostate;
-	char newkey;
-	char iaxkey;
+	enum newkey link_newkey;
 	int linkmode;
 	int newkeytimer;
 	char gott;
@@ -551,11 +566,11 @@ struct sysstate {
 #define CMD_STATE_EXECUTING 3
 
 struct rpt_cmd_struct {
-    int state;
-    int functionNumber;
-    char param[MAXDTMF];
-    char digits[MAXDTMF];
-    int command_source;
+	int state;
+	int functionNumber;
+	char param[MAXMACRO];
+	char digits[MAXDTMF];
+	int command_source;
 };
 
 enum {TOP_TOP,TOP_WON,WON_BEFREAD,BEFREAD_AFTERREAD};
@@ -574,7 +589,6 @@ struct rpt {
 	ast_mutex_t lock;
 	ast_mutex_t remlock;
 	ast_mutex_t statpost_lock;
-	ast_mutex_t blocklock;	/*!< Lock added to prevent multiple threads from performing blocking operations simultaneously */
 	struct ast_config *cfg;
 	char reload;
 	char reload1;
@@ -648,6 +662,7 @@ struct rpt {
 		struct rpt_xlat inxlat;
 		struct rpt_xlat outxlat;
 		const char *archivedir;
+		const char *archiveformat;
 		int authlevel;
 		const char *csstanzaname;
 		const char *skedstanzaname;
@@ -740,7 +755,7 @@ struct rpt {
 	char tounkeyed;
 	char tonotify;
 	char dtmfbuf[MAXDTMF];
-	char macrobuf[MAXMACRO];
+	struct ast_str *macrobuf;
 	char rem_dtmfbuf[MAXDTMF];
 	char lastdtmfcommand[MAXDTMF];
 	char cmdnode[50];
@@ -770,7 +785,8 @@ struct rpt {
 	time_t dtmf_time,rem_dtmf_time,dtmf_time_rem;
 	int calldigittimer;
 	struct rpt_conf rptconf;
-	int tailtimer,totimer,idtimer,callmode,cidx,scantimer,tmsgtimer,skedtimer,linkactivitytimer,elketimer;
+	int tailtimer, totimer, idtimer, cidx, scantimer, tmsgtimer, skedtimer, linkactivitytimer, elketimer;
+	enum patch_call_mode callmode;
 	int mustid,tailid;
 	int rptinacttimer;
 	int tailevent;
@@ -778,8 +794,8 @@ struct rpt {
 	int dtmfidx,rem_dtmfidx;
 	int dailytxtime,dailykerchunks,totalkerchunks,dailykeyups,totalkeyups,timeouts;
 	int totalexecdcommands, dailyexecdcommands;
-	long	retxtimer;
-	long	rerxtimer;
+	int	retxtimer;
+	int	rerxtimer;
 	long long totaltxtime;
 	char mydtmf;
 	char exten[AST_MAX_EXTENSION];
@@ -816,7 +832,7 @@ struct rpt {
 	int tailmessagen;
 	time_t disgorgetime;
 	time_t lastthreadrestarttime;
-	long	macrotimer;
+	int	macrotimer;
 	char	lastnodewhichkeyedusup[MAXNODESTR];
 	int	dtmf_local_timer;
 	char	dtmf_local_str[100];
@@ -839,11 +855,10 @@ struct rpt {
 	char voxtostate;
 	int linkposttimer;			
 	int keyposttimer;			
-	int lastkeytimer;			
-	char newkey;
-	char iaxkey;
+	int lastkeytimer;
+	enum newkey rpt_newkey;
 	char inpadtest;
-	long rxlingertimer;
+	int rxlingertimer;
 	char localoverride;
 	char ready;
 	char lastrxburst;
@@ -864,7 +879,7 @@ struct rpt {
 	char lastdtmfuser[MAXNODESTR];
 	char curdtmfuser[MAXNODESTR];
 	int  sleeptimer;
-	time_t lastgpstime;
+	time_t lastgpstime;			/* monotonic time */
 	int outstreampipe[2];
 	int outstreampid;
 	time_t outstreamlasterror;	/*!< \brief set when there is an outstream error and is reset when error cleared */
@@ -928,3 +943,7 @@ void __donodelog_fmt(struct rpt *myrpt, const char *file, int lineno, const char
 
 void rpt_event_process(struct rpt *myrpt);
 void *rpt_call(void *this);
+
+#define RPT_MUTE_FRAME(f) \
+	if (f) \
+	ast_frame_clear(f)

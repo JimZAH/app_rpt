@@ -37,16 +37,37 @@ Updated instructions are in the ASL3-Manual repo at https://github.com/AllStarLi
 
 Step 1: Install DAHDI and Asterisk
 
+**For users:**
+
 ```
 cd /usr/src && wget https://docs.phreaknet.org/script/phreaknet.sh && chmod +x phreaknet.sh && ./phreaknet.sh make
-phreaknet install -d -b -v 20 # install in developer mode (for backtraces and assertions),  add -s for chan_sip (if you need it still) and DAHDI (required)
+phreaknet install --alsa -d -b -v 20 # -d for DAHDI, add -s for chan_sip (if you need it still)
+```
+
+The critical flags here are `--alsa`, which adds ALSA support to the build system (required for `chan_simpleusb` and `chan_usbradio` to build) and `-d`, to install DAHDI.
+
+**For developers:**
+
+Developers should build Asterisk with DEVMODE enabled (for backtraces and assertions) and also install the test suite:
+
+```
+cd /usr/src && wget https://docs.phreaknet.org/script/phreaknet.sh && chmod +x phreaknet.sh && ./phreaknet.sh make
+phreaknet install --alsa --dahdi --devmode --testsuite
 ```
 
 Step 2: Install app_rpt modules
 
 - Clone this repo into `/usr/src` on your system: `cd /usr/src; git clone https://github.com/AllStarLink/app_rpt.git`
 
-- Then, run: `./rpt_install.sh`
+- If you would like to also install the test suite, also clone the test suite now: `cd /usr/src; git clone https://github.com/asterisk/testsuite.git`
+
+- Finally, run: `./rpt_install.sh`. This compiles Asterisk with the radio modules and adds the radio tests to the test suite, if it was present.
+
+### Running the tests
+
+If you installed the test suite, you can run the `app_rpt` tests by running `cd /usr/src/testsuite; ./runInVenv.sh python3 runtests.py --test=tests/apps/rpt`
+
+You can also use the `phreaknet runtest` command during development (e.g. `phreaknet runtest apps/rpt`), as it has some helpful tooling and wrappers to help with debugging when tests fails.
 
 ## Manual Installation (not recommended)
 
@@ -60,7 +81,9 @@ If you want to manually install app_rpt et al., here is how:
 
 ### Compiling
 
-Add this near the bottom of `apps/Makefile`:
+First, detection of the ALSA library needs to be re-added to the build system, by applying the following patch: https://github.com/InterLinked1/phreakscript/blob/master/patches/alsa.diff
+
+Then, add this near the bottom of `apps/Makefile`:
 
 `$(call MOD_ADD_C,app_rpt,$(wildcard app_rpt/rpt_*.c))`
 

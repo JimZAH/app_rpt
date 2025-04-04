@@ -51,23 +51,23 @@ int uchameleon_thread_start(struct daq_entry_tag *t)
 int uchameleon_connect(struct daq_entry_tag *t)
 {
 	int count;
-	static char *idbuf = "id\n";
-	static char *ledbuf = "led on\n";
-	static char *expect = "Chameleon";
+	static const char idbuf[] = "id\n";
+	static const char ledbuf[] = "led on\n";
+	static const char expect[] = "Chameleon";
 	char rxbuf[20];
 
 	if ((t->fd = serial_open(t->dev, B115200, 0)) == -1) {
 		ast_log(LOG_WARNING, "serial_open on %s failed!\n", t->name);
 		return -1;
 	}
-	if ((count = serial_io(t->fd, idbuf, rxbuf, strlen(idbuf), 14, DAQ_RX_TIMEOUT, 0x0a)) < 1) {
+	if ((count = serial_io(t->fd, idbuf, rxbuf, sizeof(idbuf) - 1, 14, DAQ_RX_TIMEOUT, 0x0a)) < 1) {
 		ast_log(LOG_WARNING, "serial_io on %s failed\n", t->name);
 		close(t->fd);
 		t->fd = -1;
 		return -1;
 	}
 	ast_debug(3, "count = %d, rxbuf = %s\n", count, rxbuf);
-	if ((count != 13) || (strncmp(expect, rxbuf + 4, sizeof(&expect)))) {
+	if ((count != 13) || (strncmp(expect, rxbuf + 4, sizeof(expect) - 1))) {
 		ast_log(LOG_WARNING, "%s is not a uchameleon device\n", t->name);
 		close(t->fd);
 		t->fd = -1;
@@ -75,7 +75,7 @@ int uchameleon_connect(struct daq_entry_tag *t)
 	}
 	/* uchameleon LED on solid once we communicate with it successfully */
 
-	if (serial_io(t->fd, ledbuf, NULL, strlen(ledbuf), 0, DAQ_RX_TIMEOUT, 0) == -1) {
+	if (serial_io(t->fd, ledbuf, NULL, sizeof(ledbuf) - 1, 0, DAQ_RX_TIMEOUT, 0) == -1) {
 		ast_log(LOG_WARNING, "Can't set LED on uchameleon device\n");
 		close(t->fd);
 		t->fd = -1;
@@ -87,7 +87,7 @@ int uchameleon_connect(struct daq_entry_tag *t)
 void uchameleon_alarm_handler(struct daq_pin_entry_tag *p)
 {
 	char *valuecopy;
-	int i, busy;
+	int i;
 	char *s;
 	char *argv[7];
 	int argc;
@@ -97,7 +97,7 @@ void uchameleon_alarm_handler(struct daq_pin_entry_tag *p)
 		return;
 	}
 
-	argc = explode_string(valuecopy, argv, 6, ',', 0);
+	argc = explode_string(valuecopy, argv, ARRAY_LEN(argv), ',', 0);
 
 	ast_debug(3, "Alarm event on device %s, pin %d, state = %d\n", argv[0], p->num, p->value);
 
@@ -107,31 +107,18 @@ void uchameleon_alarm_handler(struct daq_pin_entry_tag *p)
 	 * high function: argv[5]
 	 *
 	 */
-	i = busy = 0;
+	i = 0;
 	s = (p->value) ? argv[5] : argv[4];
 	if ((argc == 6) && (s[0] != '-')) {
 		for (i = 0; i < nrpts; i++) {
 			if (!strcmp(argv[3], rpt_vars[i].name)) {
-
 				struct rpt *myrpt = &rpt_vars[i];
-				rpt_mutex_lock(&myrpt->lock);
-				if ((MAXMACRO - strlen(myrpt->macrobuf)) < strlen(s)) {
-					rpt_mutex_unlock(&myrpt->lock);
-					busy = 1;
-				}
-				if (!busy) {
-					myrpt->macrotimer = MACROTIME;
-					strncat(myrpt->macrobuf, s, MAXMACRO - 1);
-				}
-				rpt_mutex_unlock(&myrpt->lock);
-
+				macro_append(myrpt, s);
 			}
 		}
 	}
 	if (argc != 6) {
 		ast_log(LOG_WARNING, "Not enough arguments to process alarm\n");
-	} else if (busy) {
-		ast_log(LOG_WARNING, "Function decoder busy while processing alarm");
 	}
 	ast_free(valuecopy);
 }
@@ -188,7 +175,7 @@ int uchameleon_pin_init(struct daq_entry_tag *t)
 
 		ast_copy_string(s, var->value, sizeof(s) - 1);
 
-		if (explode_string(s, argv, 6, ',', 0) != 6) {
+		if (explode_string(s, argv, ARRAY_LEN(argv), ',', 0) != 6) {
 			ast_log(LOG_WARNING, "Alarm arguments must be 6 for %s\n", var->name);
 			var = var->next;
 			continue;
@@ -486,12 +473,10 @@ int uchameleon_do_long(struct daq_entry_tag *t, int pin, int cmd, void (*exec)(s
 		if (cmd == DAQ_CMD_PINSET) {
 			if (arg1 && *arg1 && (*arg1 < 19)) {
 				/* New pin definition */
-				if (!(p = (struct daq_pin_entry_tag *) ast_malloc(sizeof(struct daq_pin_entry_tag)))) {
-					ast_log(LOG_ERROR, "Out of memory");
+				if (!(p = ast_calloc(1, sizeof(struct daq_pin_entry_tag)))) {
 					ast_mutex_unlock(&t->lock);
 					return -1;
 				}
-				memset(p, 0, sizeof(struct daq_pin_entry_tag));
 				p->pintype = *arg1;
 				p->command = DAQ_CMD_PINSET;
 				p->num = pin;
@@ -521,12 +506,9 @@ void uchameleon_queue_tx(struct daq_entry_tag *t, char *txbuff)
 	if (!t)
 		return;
 
-	if (!(q = (struct daq_tx_entry_tag *) ast_malloc(sizeof(struct daq_tx_entry_tag)))) {
-		ast_log(LOG_WARNING, "Out of memory\n");
+	if (!(q = ast_calloc(1, sizeof(struct daq_tx_entry_tag)))) {
 		return;
 	}
-
-	memset(q, 0, sizeof(struct daq_tx_entry_tag));
 
 	ast_copy_string(q->txbuff, txbuff, sizeof(q->txbuff));
 
@@ -534,9 +516,9 @@ void uchameleon_queue_tx(struct daq_entry_tag *t, char *txbuff)
 		t->txtail->next = q;
 		q->prev = t->txtail;
 		t->txtail = q;
-	} else
+	} else {
 		t->txhead = t->txtail = q;
-	return;
+	}
 }
 
 void *uchameleon_monitor_thread(void *this)
@@ -574,7 +556,7 @@ void *uchameleon_monitor_thread(void *this)
 			ast_debug(5, "Received: %s\n", rxbuff);
 			valid = 0;
 			/* Parse return string */
-			i = explode_string(rxbuff, rxargs, 3, ' ', 0);
+			i = explode_string(rxbuff, rxargs, ARRAY_LEN(rxargs), ' ', 0);
 			if (i == 3) {
 				if (!strcmp(rxargs[0], "pin")) {
 					valid = 1;

@@ -236,13 +236,12 @@ static void usrp_destroy(struct usrp_pvt *pvt)
 static struct usrp_pvt *usrp_alloc(void *data)
 {
 	struct usrp_pvt *pvt;
-	int flags = 0;
 	char stream[256];
 	struct sockaddr_in si_me;
 	struct hostent *host;
 	struct ast_hostent ah;
 	int o_slot;
-	
+
 	AST_DECLARE_APP_ARGS(args, AST_APP_ARG(hisip); AST_APP_ARG(hisport); AST_APP_ARG(myport););
 
 	if (ast_strlen_zero(data)) {
@@ -261,59 +260,54 @@ static struct usrp_pvt *usrp_alloc(void *data)
 		args.myport = args.hisport;
 	}
 
-	pvt = ast_malloc(sizeof(struct usrp_pvt));
-	if (pvt) {
-		memset(pvt, 0, sizeof(struct usrp_pvt));
-
-		snprintf(pvt->stream, sizeof(pvt->stream), "%s:%d:%d", args.hisip, atoi(args.hisport), atoi(args.myport));
-		pvt->rxq.qe_forw = &pvt->rxq;
-		pvt->rxq.qe_back = &pvt->rxq;
-
-		memset(&ah, 0, sizeof(ah));
-		host = ast_gethostbyname(args.hisip, &ah);
-		if (!host) {
-			ast_log(LOG_WARNING, "Unable to find host %s\n", args.hisip);
-			ast_free(pvt);
-			return NULL;
-		}
-		memset(&pvt->si_other, 0, sizeof(pvt->si_other));
-		pvt->si_other.sin_addr = *(struct in_addr *) host->h_addr;
-		pvt->si_other.sin_family = AF_INET;
-		pvt->si_other.sin_port = htons(atoi(args.hisport));
-
-		if ((pvt->usrp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-			ast_log(LOG_WARNING, "Unable to create new socket for USRP connection %s\n", stream);
-			ast_free(pvt);
-			return NULL;
-		}
-
-		memset((char *) &si_me, 0, sizeof(si_me));
-		si_me.sin_family = AF_INET;
-		si_me.sin_port = htons(atoi(args.myport));
-		si_me.sin_addr.s_addr = htonl(INADDR_ANY);
-		if (!strncmp(ast_inet_ntoa(pvt->si_other.sin_addr), "127.", 4))
-			si_me.sin_addr.s_addr = inet_addr("127.0.0.1");
-		if (bind(pvt->usrp, &si_me, sizeof(si_me)) == -1) {
-			ast_log(LOG_WARNING, "Unable to bind port for USRP connection %s\n", stream);
-			ast_free(pvt);
-			return NULL;
-		}
-		if (!pvt->usrp) {
-			ast_log(LOG_WARNING, "Unable to allocate USRP stream '%s' with flags %d\n", stream, flags);
-			ast_free(pvt);
-			return NULL;
-		}
-		// TODO: do we need locking for this?
-		for (o_slot = 0; o_slot < MAX_CHANS; o_slot++) {
-			if (!usrp_channels[o_slot])
-				break;
-		}
-		if (o_slot >= MAX_CHANS) {
-			ast_log(LOG_WARNING, "Unable to find empty usrp_channels[] entry\n");
-			return NULL;
-		}
-		usrp_channels[o_slot] = pvt;
+	pvt = ast_calloc(1, sizeof(struct usrp_pvt));
+	if (!pvt) {
+		return NULL;
 	}
+
+	snprintf(pvt->stream, sizeof(pvt->stream), "%s:%d:%d", args.hisip, atoi(args.hisport), atoi(args.myport));
+	pvt->rxq.qe_forw = &pvt->rxq;
+	pvt->rxq.qe_back = &pvt->rxq;
+
+	memset(&ah, 0, sizeof(ah));
+	host = ast_gethostbyname(args.hisip, &ah);
+	if (!host) {
+		ast_log(LOG_WARNING, "Unable to find host %s\n", args.hisip);
+		ast_free(pvt);
+		return NULL;
+	}
+	memset(&pvt->si_other, 0, sizeof(pvt->si_other));
+	pvt->si_other.sin_addr = *(struct in_addr *) host->h_addr;
+	pvt->si_other.sin_family = AF_INET;
+	pvt->si_other.sin_port = htons(atoi(args.hisport));
+
+	if ((pvt->usrp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+		ast_log(LOG_WARNING, "Unable to create new socket for USRP connection %s\n", stream);
+		ast_free(pvt);
+		return NULL;
+	}
+
+	memset((char *) &si_me, 0, sizeof(si_me));
+	si_me.sin_family = AF_INET;
+	si_me.sin_port = htons(atoi(args.myport));
+	si_me.sin_addr.s_addr = htonl(INADDR_ANY);
+	if (!strncmp(ast_inet_ntoa(pvt->si_other.sin_addr), "127.", 4))
+		si_me.sin_addr.s_addr = inet_addr("127.0.0.1");
+	if (bind(pvt->usrp, &si_me, sizeof(si_me)) == -1) {
+		ast_log(LOG_WARNING, "Unable to bind port for USRP connection %s\n", stream);
+		ast_free(pvt);
+		return NULL;
+	}
+	// TODO: do we need locking for this?
+	for (o_slot = 0; o_slot < MAX_CHANS; o_slot++) {
+		if (!usrp_channels[o_slot])
+			break;
+	}
+	if (o_slot >= MAX_CHANS) {
+		ast_log(LOG_WARNING, "Unable to find empty usrp_channels[] entry\n");
+		return NULL;
+	}
+	usrp_channels[o_slot] = pvt;
 	return pvt;
 }
 
@@ -371,9 +365,11 @@ static int usrp_indicate(struct ast_channel *ast, int cond, const void *data, si
 	switch (cond) {
 	case AST_CONTROL_RADIO_KEY:
 		p->txkey = 1;
+		ast_debug(1, "Channel %s: ACRK TX ON.\n", ast_channel_name(ast));
 		break;
 	case AST_CONTROL_RADIO_UNKEY:
 		p->txkey = 0;
+		ast_debug(1, "Channel %s: ACRUK TX OFF.\n", ast_channel_name(ast));
 		break;
 	case AST_CONTROL_HANGUP:
 		return -1;
@@ -593,6 +589,7 @@ static int usrp_xwrite(struct ast_channel *ast, struct ast_frame *frame)
 				remque((struct qelem *) qp);
 				ast_free(qp);
 			}
+			ast_debug(1, "Channel %s: Receive queue exceeds the threshold of %d\n", ast_channel_name(ast), QUEUE_OVERLOAD_THRESHOLD);
 			if (pvt->rxkey) {
 				pvt->rxkey = 1;
 			}
@@ -610,6 +607,7 @@ static int usrp_xwrite(struct ast_channel *ast, struct ast_frame *frame)
 				fr.delivery.tv_sec = 0;
 				fr.delivery.tv_usec = 0;
 				ast_queue_frame(ast, &fr);
+				ast_debug(1, "Channel %s: RX ON\n", ast_channel_name(ast));
 			}
 			pvt->rxkey = MAX_RXKEY_TIME;
 			qp = pvt->rxq.qe_forw;
@@ -662,6 +660,7 @@ static int usrp_xwrite(struct ast_channel *ast, struct ast_frame *frame)
 		fr.delivery.tv_sec = 0;
 		fr.delivery.tv_usec = 0;
 		ast_queue_frame(ast, &fr);
+		ast_debug(1, "Channel %s: RX OFF\n", ast_channel_name(ast));
 	}
 	/* Decrement the receive key counter.
 	 * This ensures that we do not get stuck in receive mode.

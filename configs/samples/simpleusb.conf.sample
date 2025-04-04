@@ -16,11 +16,11 @@
 
 ;jbresyncthreshold = 1000   ; Jump in the frame timestamps over which the jitterbuffer is
 							; resynchronized. Useful to improve the quality of the voice, with
-							; big jumps in/broken timestamps, usualy sent from exotic devices
+							; big jumps in/broken timestamps, usually sent from exotic devices
 							; and programs. Defaults to 1000.
 
 ;jbimpl = fixed             ; Jitterbuffer implementation, used on the receiving side of an simpleusb
-							; channel. Two implementations are currenlty available - "fixed"
+							; channel. Two implementations are currently available - "fixed"
 							; (with size always equals to jbmax-size) and "adaptive" (with
 							; variable size, actually the new jb of IAX2). Defaults to fixed.
 
@@ -49,11 +49,15 @@
                             ; no - no carrier detection at all
                             ; usb - from the COR line on the USB sound fob (Active high)
                             ; usbinvert - from the inverted COR line on the USB sound fob (Active low)
+                            ; pp - from parallel port (Active high)
+                            ; ppinvert - from the inverted parallel port (Active low)
 								
 ;ctcssfrom = usbinvert      ; no,usb,usbinvert
                             ; no - CTCSS decoding, system will be carrier squelch
                             ; usb - CTCSS decoding using input from USB sound fob (Active high)
                             ; usbinvert - from the inverted CTCSS line on the USB sound fob (Active low)
+                            ; pp - from parallel port (Active high)
+                            ; ppinvert - from the inverted parallel port (Active low)
 
 ;deemphasis = no            ; enable de-emphasis (input from discriminator)
 
@@ -66,7 +70,7 @@
 							; intervals following the release of PTT. Use this ONLY on simplex
 							; nodes, and leave commented out for repeaters or other full duplex nodes.
 
-;txoffdelay = 0             ; Ignore the reciever for a specified number of 20 millisecond
+;txoffdelay = 0             ; Ignore the receiver for a specified number of 20 millisecond
 							; intervals after the transmitter unkeys.
 							; This is useful when setting up a half-duplex link with an existing
 							; repeater, where you need to ignore the repeater's hangtime.
@@ -90,6 +94,10 @@
 
 ;duplex3 = 0                ; duplex 3 gain setting (0 to disable)
 
+;clipledgpio = 0            ; Enable ADC Clip Detect feature to use a GPIO output (0 to disable).
+                            ; Supports URI Clip LED by setting a GPIO (if available) high for 500mS
+                            ; when clipping detected. Value = GPIO# to use (GPIO1 recommended)
+
 ;gpioX=in					; define input/output pin GPIO(x) in,out0,out1 (where X {1..8}) (optional)
 
 ;pport=/dev/parport0		; Specify parport device (optional)
@@ -97,6 +105,11 @@
 
 ;ppX=out0					; printer port pin(x) [x is 2-9] initial output state [out0,out1] or 'ptt' (for output pins)
 ;ppX=in						; printer port pin(x) [x is 10,12,13,15] input pin [in,cor,ctcss]
+
+legacyaudioscaling = no     ; If yes, continue to do raw audio sample scaling and clipping, resulting in Tx audio levels increasing
+                            ; by 0.78dB and Rx audio levels increasing by 0-1.5dB. Should be set to no unless you have an existing
+                            ; node with precisely adjusted audio levels and are unable to adjust them. This parameter and associated
+                            ; scaling/clipping code will be deleted once existing installs have been able to verify their audio levels
 
 ;[usb]
 ; First channel unique configuration

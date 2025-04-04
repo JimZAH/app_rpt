@@ -9,8 +9,10 @@
 
 #include "app_rpt.h"
 #include "rpt_lock.h"
+#include "rpt_link.h"
 #include "rpt_channel.h"
 #include "rpt_config.h"
+#include "rpt_utils.h"
 
 extern char *dtmf_tones[];
 
@@ -35,7 +37,6 @@ void rpt_safe_sleep(struct rpt *rpt, struct ast_channel *chan, int ms)
 		}
 		ast_frfree(f);
 	}
-	return;
 }
 
 int wait_interval(struct rpt *myrpt, int type, struct ast_channel *chan)
@@ -58,7 +59,7 @@ int wait_interval(struct rpt *myrpt, int type, struct ast_channel *chan)
 			return -1;
 		}
 		ast_debug(1, "Delay complete\n");
-	/* This is not superflous... it's checking the same condition, but it might have gone true again after we exited the first loop, so check. */
+	/* This is not superfluous... it's checking the same condition, but it might have gone true again after we exited the first loop, so check. */
 	} while (myrpt->p.holdofftelem && (myrpt->keyed || (myrpt->remrx && (type != DLY_ID))));
 	return 0;
 }
@@ -77,15 +78,7 @@ int priority_jump(struct rpt *myrpt, struct ast_channel *chan)
 
 int sayfile(struct ast_channel *mychannel, char *fname)
 {
-	int res;
-
-	res = ast_streamfile(mychannel, fname, ast_channel_language(mychannel));
-	if (!res)
-		res = ast_waitstream(mychannel, "");
-	else
-		ast_log(LOG_WARNING, "ast_streamfile %s failed on %s\n", fname, ast_channel_name(mychannel));
-	ast_stopstream(mychannel);
-	return res;
+	return ast_stream_and_wait(mychannel, fname, "");
 }
 
 int saycharstr(struct ast_channel *mychannel, char *str)
@@ -128,7 +121,7 @@ int saynum(struct ast_channel *mychannel, int num)
 
 int saynode(struct rpt *myrpt, struct ast_channel *mychannel, char *name)
 {
-	int res = 0, tgn;
+	int res = 0, tgn = 0;
 	char *val, fname[300], str[100];
 
 	if (strlen(name) < 1)
@@ -339,11 +332,11 @@ int send_morse(struct ast_channel *chan, char *string, int speed, int freq, int 
 
 	dottime = 900 / speed;
 
-	/* Establish timing releationships */
+	/* Establish timing relationships */
 
-	dashtime = 3 * dottime;
+	dashtime = dottime * 3;
 	intralettertime = dottime;
-	interlettertime = dottime * 4;
+	interlettertime = dottime * 3;
 	interwordtime = dottime * 7;
 
 	for (; (*string) && (!res); string++) {
@@ -420,14 +413,9 @@ int send_usb_txt(struct rpt *myrpt, char *txt)
 	struct ast_frame wf;
 
 	ast_debug(1, "send_usb_txt %s\n", txt);
-	wf.frametype = AST_FRAME_TEXT;
-	wf.subclass.format = ast_format_slin;
-	wf.offset = 0;
-	wf.mallocd = 0;
+	init_text_frame(&wf, "send_usb_txt");
 	wf.datalen = strlen(txt) + 1;
 	wf.data.ptr = txt;
-	wf.samples = 0;
-	wf.src = "send_usb_txt";
 	ast_write(myrpt->txchannel, &wf);
 	return 0;
 }
@@ -442,18 +430,13 @@ int send_link_pl(struct rpt *myrpt, char *txt)
 		return 0;
 	snprintf(str, sizeof(str), "C %s %s %s", myrpt->name, myrpt->p.ctgroup, txt);
 	ast_debug(1, "send_link_pl %s\n", str);
-	wf.frametype = AST_FRAME_TEXT;
-	wf.subclass.format = ast_format_slin;
-	wf.offset = 0;
-	wf.mallocd = 0;
+	init_text_frame(&wf, "send_link_pl");
 	wf.datalen = strlen(str) + 1;
 	wf.data.ptr = str;
-	wf.samples = 0;
-	wf.src = "send_link_pl";
 	l = myrpt->links.next;
 	while (l && (l != &myrpt->links)) {
 		if ((l->chan) && l->name[0] && (l->name[0] != '0')) {
-			ast_write(l->chan, &wf);
+			rpt_qwrite(l, &wf);
 		}
 		l = l->next;
 	}
@@ -462,22 +445,22 @@ int send_link_pl(struct rpt *myrpt, char *txt)
 
 void send_newkey(struct ast_channel *chan)
 {
+	ast_assert(chan != NULL);
 	/* app_sendtext locks the channel before calling ast_sendtext,
 	 * do this to prevent simultaneous channel servicing which can cause an assertion. */
 	ast_channel_lock(chan);
 	if (ast_sendtext(chan, NEWKEY1STR)) {
-		ast_log(LOG_WARNING, "Failed to send text %s on %s\n", ast_channel_name(chan), NEWKEY1STR);
+		ast_log(LOG_WARNING, "Failed to send text %s on %s\n", NEWKEY1STR, ast_channel_name(chan));
 	}
 	ast_channel_unlock(chan);
-	return;
 }
 
-void send_old_newkey(struct ast_channel *chan)
+void send_newkey_redundant(struct ast_channel *chan)
 {
+	ast_assert(chan != NULL);
 	ast_channel_lock(chan);
 	if (ast_sendtext(chan, NEWKEYSTR)) {
-		ast_log(LOG_WARNING, "Failed to send text %s on %s\n", ast_channel_name(chan), NEWKEYSTR);
+		ast_log(LOG_WARNING, "Failed to send text %s on %s\n", NEWKEYSTR, ast_channel_name(chan));
 	}
 	ast_channel_unlock(chan);
-	return;
 }
